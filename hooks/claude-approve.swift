@@ -150,6 +150,7 @@ enum Layout {
     static let pathLineHeight: CGFloat = 16
 
     // Separator / spacing
+    static let separatorHeight: CGFloat = 1
     static let sectionGap: CGFloat = 10
     static let codeBlockGap: CGFloat = 8
     static let tagGistGap: CGFloat = 10
@@ -204,8 +205,8 @@ enum Layout {
 
     /// Spacing breakdown for fixed chrome (everything except code block and buttons).
     static let fixedChrome: CGFloat = panelTopPadding + projectHeight + pathHeight
-        + sectionGap + 1 + sectionGap + tagButtonHeight + codeBlockGap + sectionGap
-        + panelBottomPadding
+        + sectionGap + separatorHeight + sectionGap + tagButtonHeight + codeBlockGap
+        + sectionGap + panelBottomPadding
 }
 
 // MARK: - Input Parsing
@@ -1113,7 +1114,8 @@ private func showPermissionDialog(
     // --- Separator ---
     yPos -= Layout.sectionGap
     let separator = NSBox(frame: NSRect(x: Layout.panelInset, y: yPos,
-                                        width: Layout.panelWidth - Layout.panelInset * 2, height: 1))
+                                        width: Layout.panelWidth - Layout.panelInset * 2,
+                                        height: Layout.separatorHeight))
     separator.boxType = .separator
     contentView.addSubview(separator)
 
@@ -1329,7 +1331,6 @@ private func showPermissionDialog(
         NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
         signalSource.cancel()
         if let monitor = keyboardMonitor { NSEvent.removeMonitor(monitor) }
-        notifyNextSiblingDialog()
     }
     activatePanel(panel)
     NSApp.runModal(for: panel)
@@ -1421,7 +1422,10 @@ let resultKey = showPermissionDialog(
     optionsHeight: optionsHeight
 )
 
-// Process result: persist approvals and write response
+// Process result: persist approvals and write response immediately
 let (decision, reason) = processResult(resultKey: resultKey, input: input)
 writeHookResponse(decision: decision, reason: reason)
+
+// Signal next sibling AFTER response is delivered to Claude Code
+notifyNextSiblingDialog()
 exit(0)

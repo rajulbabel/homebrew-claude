@@ -99,3 +99,4 @@ rm -rf /tmp/claude-hook-sessions/
 - Use imperative mood in commit messages ("Add feature", not "Added feature")
 - Keep subject line under 72 characters
 - Use body for details when the change is non-trivial
+- **NEVER include `Co-Authored-By` lines** — no attribution trailers of any kind
