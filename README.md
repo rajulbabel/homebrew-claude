@@ -46,18 +46,17 @@ You stop babysitting terminals. You work on whatever you want, and when any Clau
 git clone git@github.com:rajulbabel/.claude.git ~/.claude
 ```
 
-That's it. The `settings.json` is pre-configured to use the hook.
-
-### Build from source
-
-If you want to recompile the Swift binary (e.g., after making changes):
+If `~/.claude` already exists, merge the hooks into it:
 
 ```bash
-cd ~/.claude/hooks
-swiftc -framework AppKit -o claude-approve claude-approve.swift
+git clone git@github.com:rajulbabel/.claude.git /tmp/.claude-hooks && cp -r /tmp/.claude-hooks/hooks ~/.claude/ && rm -rf /tmp/.claude-hooks
 ```
 
-Requires Xcode Command Line Tools (`xcode-select --install`).
+Then add the hooks config to your `~/.claude/settings.json` — see [Configuration](#configuration) below.
+
+Restart Claude Code for hooks to take effect.
+
+> **Intel Mac?** Recompile the binary: `cd ~/.claude/hooks && swiftc -framework AppKit -o claude-approve claude-approve.swift`
 
 ## How It Works
 
