@@ -49,7 +49,7 @@ let lblClr    = NSColor(calibratedRed: 0.55, green: 0.60, blue: 0.70, alpha: 1.0
 
 let mono     = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 let monoBold = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
-let lblFont  = NSFont.monospacedSystemFont(ofSize: 11, weight: .medium)
+let lblFont  = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
 
 // MARK: - Gist (one-line summary)
 
@@ -373,7 +373,7 @@ func buildContent() -> NSAttributedString {
 
 var dialogResult = "deny"
 
-// MARK: - Options (same as Claude Code's native permission prompt)
+// MARK: - Options (dynamically generated per tool type, matching Claude Code's native prompts)
 
 struct PermOption {
     let label: String
@@ -381,26 +381,61 @@ struct PermOption {
     let color: NSColor
 }
 
-let optGreen  = NSColor(calibratedRed: 0.25, green: 0.75, blue: 0.45, alpha: 1.0)
-let optBlue   = NSColor(calibratedRed: 0.35, green: 0.55, blue: 0.90, alpha: 1.0)
-let optAmber  = NSColor(calibratedRed: 0.85, green: 0.65, blue: 0.20, alpha: 1.0)
-let optRed    = NSColor(calibratedRed: 0.90, green: 0.30, blue: 0.30, alpha: 1.0)
+let optGreen  = NSColor(calibratedRed: 0.18, green: 0.80, blue: 0.44, alpha: 1.0)
+let optBlue   = NSColor(calibratedRed: 0.30, green: 0.56, blue: 1.0,  alpha: 1.0)
+let optRed    = NSColor(calibratedRed: 1.0,  green: 0.32, blue: 0.32, alpha: 1.0)
 
-let permOptions: [PermOption] = [
-    PermOption(label: "Allow once",                        result: "allow_once",    color: optGreen),
-    PermOption(label: "Allow \(toolName) this session",    result: "allow_session", color: optBlue),
-    PermOption(label: "Always allow \(toolName)",          result: "always_allow",  color: optAmber),
-    PermOption(label: "Reject",                            result: "deny",          color: optRed),
-]
+func buildPermOptions() -> [PermOption] {
+    switch toolName {
+    case "Bash":
+        let cmd = toolInput["command"] as? String ?? ""
+        let firstWord = cmd.components(separatedBy: .whitespaces).first ?? cmd
+        let prefix = firstWord.isEmpty ? "similar" : firstWord
+        let projectName = (cwd as NSString).lastPathComponent
+        return [
+            PermOption(label: "Yes", result: "allow_once", color: optGreen),
+            PermOption(label: "Yes, and don't ask again for \(prefix) commands in \(projectName)", result: "dont_ask_bash", color: optBlue),
+            PermOption(label: "No, and tell Claude what to do differently", result: "deny", color: optRed),
+        ]
+    case "Edit", "Write":
+        return [
+            PermOption(label: "Yes", result: "allow_once", color: optGreen),
+            PermOption(label: "Yes, allow all edits during this session", result: "allow_edits_session", color: optBlue),
+            PermOption(label: "No, and tell Claude what to do differently", result: "deny", color: optRed),
+        ]
+    case "WebFetch":
+        let urlStr = toolInput["url"] as? String ?? ""
+        let domain = URL(string: urlStr)?.host ?? urlStr
+        return [
+            PermOption(label: "Yes", result: "allow_once", color: optGreen),
+            PermOption(label: "Yes, and don't ask again for \(domain)", result: "dont_ask_domain", color: optBlue),
+            PermOption(label: "No, and tell Claude what to do differently", result: "deny", color: optRed),
+        ]
+    case "WebSearch":
+        return [
+            PermOption(label: "Yes", result: "allow_once", color: optGreen),
+            PermOption(label: "Yes, and don't ask again for WebSearch", result: "dont_ask_tool", color: optBlue),
+            PermOption(label: "No, and tell Claude what to do differently", result: "deny", color: optRed),
+        ]
+    default:
+        return [
+            PermOption(label: "Yes", result: "allow_once", color: optGreen),
+            PermOption(label: "Yes, during this session", result: "allow_session", color: optBlue),
+            PermOption(label: "No, and tell Claude what to do differently", result: "deny", color: optRed),
+        ]
+    }
+}
+
+let permOptions = buildPermOptions()
 
 // MARK: - Build Window
 
 let pw: CGFloat = 580
-let optH: CGFloat = 30
-let optGap: CGFloat = 6
+let optH: CGFloat = 34
+let optGap: CGFloat = 8
 
 // --- Determine button layout: pack into rows ---
-let btnFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+let btnFont = NSFont.systemFont(ofSize: 12.5, weight: .bold)
 let btnPad: CGFloat = 20
 let btnMargin: CGFloat = 12
 let availW = pw - btnMargin * 2
@@ -409,12 +444,13 @@ let btnNaturalWidths = permOptions.map { opt in
     (opt.label as NSString).size(withAttributes: [.font: btnFont]).width + btnPad * 2
 }
 
-// Greedily pack buttons into rows
+// Pack buttons into rows (max 2 per row)
+let maxPerRow = 2
 var rows: [[Int]] = [[]]
 var rowW: CGFloat = 0
 for i in 0..<permOptions.count {
     let needed = btnNaturalWidths[i] + (rows[rows.count - 1].isEmpty ? 0 : optGap)
-    if !rows[rows.count - 1].isEmpty && rowW + needed > availW {
+    if !rows[rows.count - 1].isEmpty && (rowW + needed > availW || rows[rows.count - 1].count >= maxPerRow) {
         rows.append([i])
         rowW = btnNaturalWidths[i]
     } else {
@@ -439,8 +475,8 @@ let screenH = NSScreen.main?.visibleFrame.height ?? 800
 let maxContentH = min(400, screenH * 0.5)
 let codeBlockH = max(36, min(naturalContentH, maxContentH))
 
-// Total: top(10) + header(20) + gap(6) + sep(1) + gist(18) + gap(4) + code + gap(8) + buttons row + bottom(6)
-let fixedChrome: CGFloat = 10 + 20 + 6 + 1 + 18 + 4 + 8 + 6
+// Total: top(14) + project(28) + path(18) + gap(10) + sep(1) + gap(10) + toolGist(26) + gap(8) + code + gap(10) + buttons + bottom(6)
+let fixedChrome: CGFloat = 14 + 28 + 18 + 10 + 1 + 10 + 26 + 8 + 10 + 6
 let ph = fixedChrome + codeBlockH + optionsRowH
 
 let panel = NSPanel(
@@ -454,7 +490,7 @@ panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 panel.isMovableByWindowBackground = true
 panel.backgroundColor = bgColor
 panel.titlebarAppearsTransparent = true
-panel.titleVisibility = .hidden
+panel.titleVisibility = .visible
 panel.appearance = NSAppearance(named: .darkAqua)
 // Center on screen
 if let screen = NSScreen.main {
@@ -471,33 +507,78 @@ cv.wantsLayer = true
 cv.layer?.backgroundColor = bgColor.cgColor
 panel.contentView = cv
 
-var yp = ph - 10
+var yp = ph - 14
 
-// Header
-yp -= 20
-let tl = NSTextField(labelWithString: "\(toolName)  —  \(sessionFull)")
-tl.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-tl.textColor = textPri
-tl.frame = NSRect(x: 16, y: yp, width: pw - 32, height: 18)
-tl.lineBreakMode = .byTruncatingTail
-cv.addSubview(tl)
+// Session identity — project name + path
+yp -= 28
+let projLabel = NSTextField(labelWithString: sessionName)
+projLabel.font = NSFont.systemFont(ofSize: 20, weight: .bold)
+projLabel.textColor = textPri
+projLabel.frame = NSRect(x: 16, y: yp, width: pw - 32, height: 28)
+projLabel.lineBreakMode = .byTruncatingTail
+cv.addSubview(projLabel)
 
-yp -= 6
+yp -= 18
+let pathLabel = NSTextField(labelWithString: cwd)
+pathLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
+pathLabel.textColor = textSec
+pathLabel.frame = NSRect(x: 16, y: yp, width: pw - 32, height: 16)
+pathLabel.lineBreakMode = .byTruncatingMiddle
+cv.addSubview(pathLabel)
+
+yp -= 10
 let sep = NSBox(frame: NSRect(x: 12, y: yp, width: pw - 24, height: 1))
 sep.boxType = .separator
 cv.addSubview(sep)
 
-// Gist line
-yp -= 18
+yp -= 10  // gap after separator, before tool tag
+
+// Tool tag + gist on the same line
+let toolTagColors: [String: NSColor] = [
+    "Bash": NSColor(calibratedRed: 0.18, green: 0.80, blue: 0.44, alpha: 1),
+    "Edit": NSColor(calibratedRed: 0.95, green: 0.68, blue: 0.25, alpha: 1),
+    "Write": NSColor(calibratedRed: 0.95, green: 0.68, blue: 0.25, alpha: 1),
+    "Read": NSColor(calibratedRed: 0.45, green: 0.72, blue: 1.0, alpha: 1),
+    "Task": NSColor(calibratedRed: 0.72, green: 0.52, blue: 0.95, alpha: 1),
+    "WebFetch": NSColor(calibratedRed: 0.40, green: 0.85, blue: 0.85, alpha: 1),
+    "WebSearch": NSColor(calibratedRed: 0.40, green: 0.85, blue: 0.85, alpha: 1),
+    "Glob": NSColor(calibratedRed: 0.65, green: 0.75, blue: 0.85, alpha: 1),
+    "Grep": NSColor(calibratedRed: 0.65, green: 0.75, blue: 0.85, alpha: 1),
+]
+let tagColor = toolTagColors[toolName] ?? NSColor(calibratedWhite: 0.65, alpha: 1)
+let tagFont = NSFont.systemFont(ofSize: 13, weight: .bold)
+
+yp -= 26
+let rowH: CGFloat = 26
+
+// Tag pill: NSButton naturally centers text at any size
+let tagTextW = (toolName as NSString).size(withAttributes: [.font: tagFont]).width
+let tagW = tagTextW + 20
+let tagH: CGFloat = 26
+let tagPill = NSButton(frame: NSRect(x: 16, y: yp, width: tagW, height: tagH))
+tagPill.title = toolName
+tagPill.bezelStyle = .rounded
+tagPill.isBordered = false
+tagPill.wantsLayer = true
+tagPill.layer?.cornerRadius = 5
+tagPill.layer?.backgroundColor = tagColor.withAlphaComponent(0.18).cgColor
+tagPill.font = tagFont
+tagPill.contentTintColor = tagColor
+tagPill.focusRingType = .none
+tagPill.refusesFirstResponder = true
+cv.addSubview(tagPill)
+
 let gistLabel = NSTextField(labelWithString: buildGist())
-gistLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-gistLabel.textColor = textSec
-gistLabel.frame = NSRect(x: 16, y: yp, width: pw - 32, height: 16)
+gistLabel.font = NSFont.systemFont(ofSize: 15, weight: .bold)
+gistLabel.textColor = textPri
+gistLabel.sizeToFit()
+let gistNatH = gistLabel.frame.height
+gistLabel.frame = NSRect(x: 16 + tagW + 10, y: yp + (rowH - gistNatH) / 2, width: pw - 42 - tagW, height: gistNatH)
 gistLabel.lineBreakMode = .byTruncatingTail
 cv.addSubview(gistLabel)
 
 // Code block (sized to content)
-yp -= 4
+yp -= 8
 let codeTop = yp
 let codeBot = codeTop - codeBlockH
 let cH = codeBlockH
@@ -537,7 +618,7 @@ class BH: NSObject {
 }
 
 for (rowIdx, row) in rows.enumerated() {
-    let rowY = codeBot - 8 - optH - CGFloat(rowIdx) * (optH + optGap)
+    let rowY = codeBot - 10 - optH - CGFloat(rowIdx) * (optH + optGap)
     let gaps = optGap * CGFloat(max(0, row.count - 1))
     let bw = (availW - gaps) / CGFloat(row.count)
     for (col, i) in row.enumerated() {
@@ -547,10 +628,8 @@ for (rowIdx, row) in rows.enumerated() {
         btn.title = opt.label
         btn.alignment = .center
         btn.bezelStyle = .rounded; btn.isBordered = false; btn.wantsLayer = true
-        btn.layer?.cornerRadius = 5
-        btn.layer?.backgroundColor = opt.color.withAlphaComponent(0.08).cgColor
-        btn.layer?.borderWidth = 1
-        btn.layer?.borderColor = opt.color.withAlphaComponent(0.25).cgColor
+        btn.layer?.cornerRadius = 7
+        btn.layer?.backgroundColor = opt.color.withAlphaComponent(0.18).cgColor
         btn.contentTintColor = opt.color
         btn.font = btnFont; btn.tag = i
         btn.target = BH.shared; btn.action = #selector(BH.clicked(_:))
@@ -584,6 +663,37 @@ panel.orderOut(nil)
 var decision = "deny"
 var reason = "Rejected via dialog"
 
+func saveToSessionFile(_ entry: String) {
+    let dir = "/tmp/claude-hook-sessions"
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    if let fh = FileHandle(forWritingAtPath: sessionFile) {
+        fh.seekToEndOfFile()
+        fh.write("\(entry)\n".data(using: .utf8)!)
+        fh.closeFile()
+    } else {
+        FileManager.default.createFile(atPath: sessionFile, contents: "\(entry)\n".data(using: .utf8))
+    }
+}
+
+func saveToLocalSettings(_ rule: String) {
+    let settingsPath = cwd + "/.claude/settings.local.json"
+    let settingsDir = cwd + "/.claude"
+    try? FileManager.default.createDirectory(atPath: settingsDir, withIntermediateDirectories: true)
+    var json: [String: Any] = [:]
+    if let data = FileManager.default.contents(atPath: settingsPath),
+       let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        json = existing
+    }
+    var perms = json["permissions"] as? [String: Any] ?? [:]
+    var allow = perms["allow"] as? [String] ?? []
+    if !allow.contains(rule) { allow.append(rule) }
+    perms["allow"] = allow
+    json["permissions"] = perms
+    if let updated = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
+        try? updated.write(to: URL(fileURLWithPath: settingsPath))
+    }
+}
+
 switch dialogResult {
 case "allow_once":
     decision = "allow"
@@ -592,33 +702,34 @@ case "allow_once":
 case "allow_session":
     decision = "allow"
     reason = "Allowed \(toolName) for this session"
-    let dir = "/tmp/claude-hook-sessions"
-    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-    if let fh = FileHandle(forWritingAtPath: sessionFile) {
-        fh.seekToEndOfFile()
-        fh.write("\(toolName)\n".data(using: .utf8)!)
-        fh.closeFile()
-    } else {
-        FileManager.default.createFile(atPath: sessionFile, contents: "\(toolName)\n".data(using: .utf8))
-    }
+    saveToSessionFile(toolName)
 
-case "always_allow":
+case "allow_edits_session":
     decision = "allow"
-    reason = "Always allowed \(toolName)"
-    let settingsPath = NSHomeDirectory() + "/.claude/settings.json"
-    if let data = FileManager.default.contents(atPath: settingsPath),
-       var json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-       var perms = json["permissions"] as? [String: Any],
-       var allow = perms["allow"] as? [String] {
-        if !allow.contains(toolName) {
-            allow.append(toolName)
-            perms["allow"] = allow
-            json["permissions"] = perms
-            if let updated = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
-                try? updated.write(to: URL(fileURLWithPath: settingsPath))
-            }
-        }
-    }
+    reason = "Allowed all edits for this session"
+    saveToSessionFile("Edit")
+    saveToSessionFile("Write")
+
+case "dont_ask_bash":
+    decision = "allow"
+    let cmd = toolInput["command"] as? String ?? ""
+    let prefix = cmd.components(separatedBy: .whitespaces).first ?? ""
+    let rule = prefix.isEmpty ? "Bash(*)" : "Bash(\(prefix) *)"
+    reason = "Allowed \(rule) for project"
+    saveToLocalSettings(rule)
+
+case "dont_ask_domain":
+    decision = "allow"
+    let urlStr = toolInput["url"] as? String ?? ""
+    let domain = URL(string: urlStr)?.host ?? ""
+    let rule = domain.isEmpty ? "WebFetch" : "WebFetch(domain:\(domain))"
+    reason = "Allowed \(rule)"
+    saveToLocalSettings(rule)
+
+case "dont_ask_tool":
+    decision = "allow"
+    reason = "Allowed \(toolName) for project"
+    saveToLocalSettings(toolName)
 
 default:
     decision = "deny"
