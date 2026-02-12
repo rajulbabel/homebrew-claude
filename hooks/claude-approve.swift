@@ -488,7 +488,7 @@ let ph = fixedChrome + codeBlockH + optionsRowH
 
 let panel = NSPanel(
     contentRect: NSRect(x: 0, y: 0, width: pw, height: ph),
-    styleMask: [.titled, .closable, .nonactivatingPanel, .hudWindow],
+    styleMask: [.titled, .closable, .nonactivatingPanel],
     backing: .buffered, defer: false
 )
 panel.title = "Claude Code"
@@ -498,6 +498,8 @@ panel.isMovableByWindowBackground = true
 panel.backgroundColor = bgColor
 panel.titleVisibility = .visible
 panel.appearance = NSAppearance(named: .darkAqua)
+panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+panel.standardWindowButton(.zoomButton)?.isHidden = true
 // Center on screen
 if let screen = NSScreen.main {
     let sf = screen.visibleFrame
