@@ -83,16 +83,29 @@ between sections.
 
 ## Testing
 
-After compiling, trigger the dialog by having Claude Code use any matched tool:
-```
-echo "test"
-```
-This will show the permission dialog for the Bash tool.
+After any change to `claude-approve.swift`, recompile and run through all test cases.
+Reset session approvals first: `rm -rf /tmp/claude-hook-sessions/`
 
-To reset session approvals:
-```bash
-rm -rf /tmp/claude-hook-sessions/
-```
+### Test Cases
+
+1. **Consecutive Bash dialogs (5+)** — fire 5+ parallel `echo` commands. Dialogs appear
+   one at a time, next gets focus automatically after dismissal, no flickering.
+2. **Button press feedback** — on each dialog test mouse click AND keyboard shortcuts
+   (1/2/3). Button should visually highlight. Must work on all consecutive dialogs,
+   not just the last one.
+3. **Desktop/Space switching** — while dialog is visible, switch macOS Spaces and back.
+   Dialog regains focus automatically. Test with single and consecutive dialogs.
+4. **File edit diffs** — trigger an Edit tool. Dialog shows unified diff with line
+   numbers and red/green coloring. Revert edit after testing.
+5. **File write** — trigger a Write tool. Dialog shows file path and content preview.
+6. **Mixed tool batch** — fire parallel Bash + Glob + Grep + Edit. All dialogs resolve
+   correctly, no crashes or hangs.
+7. **Read tool** — trigger a Read. Dialog shows the file path.
+8. **Session auto-approve** — approve "allow all edits this session", then trigger
+   another Edit. It should pass silently with no dialog.
+9. **Large content** — edit a file with many lines changed or run a long command.
+   Dialog handles it without hanging (diff capped at 500 lines).
+10. **Keyboard shortcuts** — `1`/`2`/`3` select buttons, `Enter` accepts, `Esc` rejects.
 
 ## Commit Conventions
 
