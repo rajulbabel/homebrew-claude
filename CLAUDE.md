@@ -44,9 +44,10 @@ The source is organized into `// MARK: -` sections in this order:
 11. Permission Options
 12. Button Layout
 13. Content Measurement
-14. Dialog Construction
-15. Result Processing
-16. Main Entry Point
+14. Focus Management
+15. Dialog Construction
+16. Result Processing
+17. Main Entry Point
 
 New code should go in the appropriate section. Do not add code at the top level
 between sections.

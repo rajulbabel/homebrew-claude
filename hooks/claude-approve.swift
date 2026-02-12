@@ -87,6 +87,8 @@ enum Theme {
     static let buttonAllow     = NSColor(calibratedRed: 0.18, green: 0.80, blue: 0.44, alpha: 1.0)
     static let buttonPersist   = NSColor(calibratedRed: 0.30, green: 0.56, blue: 1.0,  alpha: 1.0)
     static let buttonDeny      = NSColor(calibratedRed: 1.0,  green: 0.32, blue: 0.32, alpha: 1.0)
+    static let buttonRestAlpha: CGFloat = 0.18
+    static let buttonPressAlpha: CGFloat = 0.55
 
     // Tool tag pill colors (per tool type)
     static let toolTagColors: [String: NSColor] = [
@@ -139,6 +141,7 @@ enum Layout {
     static let minCodeBlockHeight: CGFloat = 36
     static let maxCodeBlockHeight: CGFloat = 400
     static let dialogTimeout: TimeInterval = 600
+    static let pressAnimationDelay: TimeInterval = 0.12
 
     /// Spacing breakdown for fixed chrome (everything except code block and buttons).
     /// top(14) + project(28) + path(18) + gap(10) + sep(1) + gap(10) + toolGist(26) + gap(8) + gap(10) + bottom(6)
@@ -840,6 +843,39 @@ func measureContentHeight(_ content: NSAttributedString, width: CGFloat) -> CGFl
     return layoutManager.usedRect(for: textContainer).height + 24
 }
 
+// MARK: - Focus Management
+
+/// Activates the application and brings the panel to front with keyboard focus.
+private func activatePanel(_ panel: NSPanel) {
+    NSApp.activate(ignoringOtherApps: true)
+    panel.makeKeyAndOrderFront(nil)
+}
+
+/// Signals the next waiting sibling dialog to re-activate.
+///
+/// Uses `pgrep` to find other `claude-approve` processes and sends `SIGUSR1`
+/// to the one with the lowest PID, creating an orderly activation queue so
+/// dialogs take focus one at a time without fighting.
+func notifyNextSiblingDialog() {
+    let myPid = ProcessInfo.processInfo.processIdentifier
+    let pipe = Pipe()
+    let pgrep = Process()
+    pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+    pgrep.arguments = ["-x", "claude-approve"]
+    pgrep.standardOutput = pipe
+    try? pgrep.run()
+    pgrep.waitUntilExit()
+    if let pidStr = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) {
+        let pids = pidStr.components(separatedBy: "\n")
+            .compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
+            .filter { $0 != myPid }
+            .sorted()
+        if let nextPid = pids.first {
+            kill(nextPid, SIGUSR1)
+        }
+    }
+}
+
 // MARK: - Dialog Construction
 
 /// Builds and runs the permission dialog, returning the user's selected result key.
@@ -1020,13 +1056,34 @@ func showPermissionDialog(
     class ButtonHandler: NSObject {
         var options: [PermOption]
         var result: UnsafeMutablePointer<String>
+        var buttons: [NSButton] = []
+        private var pressing = false
         init(options: [PermOption], result: UnsafeMutablePointer<String>) {
             self.options = options
             self.result = result
         }
+        /// Visually depresses a button, then dismisses the dialog after a brief pause.
+        ///
+        /// Uses `CATransaction` to force an immediate layer flush so the pressed state
+        /// renders reliably even on panels that were backgrounded at launch.
+        func animatePress(index: Int) {
+            guard !pressing, index >= 0, index < buttons.count else { return }
+            pressing = true
+            let button = buttons[index]
+            let option = options[index]
+            result.pointee = option.resultKey
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            button.layer?.backgroundColor = option.color.withAlphaComponent(Theme.buttonPressAlpha).cgColor
+            CATransaction.commit()
+            CATransaction.flush()
+            button.display()
+            DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) {
+                NSApp.stopModal()
+            }
+        }
         @objc func clicked(_ sender: NSButton) {
-            result.pointee = options[sender.tag].resultKey
-            NSApp.stopModal()
+            animatePress(index: sender.tag)
         }
     }
 
@@ -1053,36 +1110,36 @@ func showPermissionDialog(
             button.isBordered = false
             button.wantsLayer = true
             button.layer?.cornerRadius = Layout.buttonCornerRadius
-            button.layer?.backgroundColor = option.color.withAlphaComponent(0.18).cgColor
+            button.layer?.backgroundColor = option.color.withAlphaComponent(Theme.buttonRestAlpha).cgColor
             button.contentTintColor = option.color
             button.font = Theme.buttonFont
             button.tag = optionIndex
             button.target = handler
             button.action = #selector(ButtonHandler.clicked(_:))
             contentView.addSubview(button)
+            handler.buttons.append(button)
 
             if optionIndex == 0 {
                 panel.defaultButtonCell = button.cell as? NSButtonCell
             }
         }
     }
+    // Sort buttons array by tag so index matches option index
+    handler.buttons.sort { $0.tag < $1.tag }
 
     // --- Keyboard shortcuts ---
     let keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
         let key = event.charactersIgnoringModifiers ?? ""
         if let num = Int(key), num >= 1, num <= options.count {
-            handler.result.pointee = options[num - 1].resultKey
-            NSApp.stopModal()
+            handler.animatePress(index: num - 1)
             return nil
         }
         if key == "\r" {
-            handler.result.pointee = options[0].resultKey
-            NSApp.stopModal()
+            handler.animatePress(index: 0)
             return nil
         }
         if key == "\u{1b}" {
-            handler.result.pointee = "deny"
-            NSApp.stopModal()
+            handler.animatePress(index: options.count - 1)
             return nil
         }
         return event
@@ -1094,11 +1151,35 @@ func showPermissionDialog(
         NSApp.stopModal()
     }
 
+    // --- Re-activate on desktop/Space switch ---
+    let spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+        forName: NSWorkspace.activeSpaceDidChangeNotification,
+        object: nil,
+        queue: .main
+    ) { _ in
+        if panel.isVisible { activatePanel(panel) }
+    }
+
+    // --- SIGUSR1 handler: sibling dialog dismissed, re-activate ---
+    signal(SIGUSR1, SIG_IGN)
+    let signalSource = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
+    signalSource.setEventHandler {
+        if panel.isVisible {
+            activatePanel(panel)
+            panel.display()
+        }
+    }
+    signalSource.resume()
+
     // --- Show dialog ---
-    NSApp.activate(ignoringOtherApps: true)
-    panel.makeKeyAndOrderFront(nil)
+    activatePanel(panel)
     NSApp.runModal(for: panel)
     panel.orderOut(nil)
+
+    // --- Cleanup and notify next sibling ---
+    NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
+    signalSource.cancel()
+    notifyNextSiblingDialog()
 
     if let monitor = keyboardMonitor {
         NSEvent.removeMonitor(monitor)
