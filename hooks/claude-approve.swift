@@ -39,11 +39,16 @@ struct HookInput {
     let cwd: String
     let sessionId: String
 
+    /// Directory for session auto-approve files.
+    static let sessionDirectory = "/tmp/claude-hook-sessions"
+
     /// Project directory name (last path component of `cwd`).
     var projectName: String { (cwd as NSString).lastPathComponent }
 
-    /// Path to the session auto-approve file.
-    var sessionFilePath: String { "/tmp/claude-hook-sessions/\(sessionId)" }
+    /// Path to the session auto-approve file, or `nil` if `sessionId` is empty.
+    var sessionFilePath: String? {
+        sessionId.isEmpty ? nil : "\(HookInput.sessionDirectory)/\(sessionId)"
+    }
 }
 
 /// A permission option displayed as a button in the dialog.
@@ -128,30 +133,88 @@ enum Theme {
 
 /// Layout constants for the dialog panel.
 enum Layout {
+    // Panel
     static let panelWidth: CGFloat = 580
+    static let panelMargin: CGFloat = 16
+    static let panelInset: CGFloat = 12
+    static let panelTopPadding: CGFloat = 14
+    static let panelBottomPadding: CGFloat = 6
+    static let fallbackScreenHeight: CGFloat = 800
+    static let maxScreenFraction: CGFloat = 0.5
+
+    // Header
+    static let projectFontSize: CGFloat = 20
+    static let projectHeight: CGFloat = 28
+    static let pathFontSize: CGFloat = 12
+    static let pathHeight: CGFloat = 18
+    static let pathLineHeight: CGFloat = 16
+
+    // Separator / spacing
+    static let sectionGap: CGFloat = 10
+    static let codeBlockGap: CGFloat = 8
+    static let tagGistGap: CGFloat = 10
+
+    // Tool tag
+    static let tagCornerRadius: CGFloat = 5
+    static let tagButtonHeight: CGFloat = 26
+    static let tagFontSize: CGFloat = 13
+    static let tagTextPadding: CGFloat = 20
+
+    // Gist
+    static let gistFontSize: CGFloat = 15
+    static let gistTrailingPadding: CGFloat = 42
+
+    // Code block
+    static let codeCornerRadius: CGFloat = 6
+    static let codeBorderWidth: CGFloat = 1
+    static let codeTextInset: CGFloat = 8
+    static let codeScrollerWidth: CGFloat = 22
+    static let codeContentInset: CGFloat = 56
+    static let contentMeasurePadding: CGFloat = 24
+    static let minCodeBlockHeight: CGFloat = 36
+    static let maxCodeBlockHeight: CGFloat = 400
+    static let minVerticalPadding: CGFloat = 8
+
+    // Buttons
     static let buttonHeight: CGFloat = 34
     static let buttonGap: CGFloat = 8
     static let buttonPadding: CGFloat = 20
     static let buttonMargin: CGFloat = 12
     static let maxButtonsPerRow = 2
     static let buttonCornerRadius: CGFloat = 7
-    static let codeCornerRadius: CGFloat = 6
-    static let tagCornerRadius: CGFloat = 5
-    static let tagButtonHeight: CGFloat = 26
-    static let minCodeBlockHeight: CGFloat = 36
-    static let maxCodeBlockHeight: CGFloat = 400
+    static let buttonRowsBottomPadding: CGFloat = 12
+    static let buttonTopGap: CGFloat = 10
+
+    // Timing
     static let dialogTimeout: TimeInterval = 600
     static let pressAnimationDelay: TimeInterval = 0.12
 
+    // Diff
+    static let maxDiffLines = 500
+    static let contextCollapseThreshold = 5
+    static let contextPrefixLines = 3
+    static let contextSuffixLines = 2
+    static let minGutterWidth = 3
+    static let gutterPadding = 5
+
+    // Content limits
+    static let maxGistUrlLength = 60
+    static let gistUrlTruncLength = 57
+    static let writePreviewLines = 50
+
     /// Spacing breakdown for fixed chrome (everything except code block and buttons).
-    /// top(14) + project(28) + path(18) + gap(10) + sep(1) + gap(10) + toolGist(26) + gap(8) + gap(10) + bottom(6)
-    static let fixedChrome: CGFloat = 14 + 28 + 18 + 10 + 1 + 10 + 26 + 8 + 10 + 6
+    static let fixedChrome: CGFloat = panelTopPadding + projectHeight + pathHeight
+        + sectionGap + 1 + sectionGap + tagButtonHeight + codeBlockGap + sectionGap
+        + panelBottomPadding
 }
 
 // MARK: - Input Parsing
 
 /// Reads and parses the hook input JSON from stdin.
-func parseHookInput() -> HookInput {
+///
+/// - Returns: A populated `HookInput` with tool name, input parameters, working directory,
+///   and session ID. Missing fields default to empty strings or an empty dictionary.
+private func parseHookInput() -> HookInput {
     let data = FileHandle.standardInput.readDataToEndOfFile()
     let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
     return HookInput(
@@ -167,9 +230,13 @@ func parseHookInput() -> HookInput {
 /// Checks if the tool has been auto-approved for this session.
 ///
 /// Session approvals are stored as newline-separated tool names in a temporary file.
-/// Returns `true` if the tool is already approved, and writes the allow response to stdout.
-func checkSessionAutoApprove(input: HookInput) -> Bool {
-    guard let contents = try? String(contentsOfFile: input.sessionFilePath, encoding: .utf8),
+/// If the tool is already approved, writes the allow response to stdout.
+///
+/// - Parameter input: The parsed hook input containing session and tool info.
+/// - Returns: `true` if the tool was auto-approved (response already written), `false` otherwise.
+private func checkSessionAutoApprove(input: HookInput) -> Bool {
+    guard let path = input.sessionFilePath,
+          let contents = try? String(contentsOfFile: path, encoding: .utf8),
           contents.components(separatedBy: "\n").contains(input.toolName) else {
         return false
     }
@@ -183,18 +250,21 @@ func checkSessionAutoApprove(input: HookInput) -> Bool {
 /// Appends a tool name to the session auto-approve file.
 ///
 /// Future invocations for this tool will be automatically allowed without showing the dialog.
-func saveToSessionFile(input: HookInput, entry: String) {
-    let dir = "/tmp/claude-hook-sessions"
-    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-    if let handle = FileHandle(forWritingAtPath: input.sessionFilePath) {
-        handle.seekToEndOfFile()
-        handle.write("\(entry)\n".data(using: .utf8)!)
-        handle.closeFile()
-    } else {
-        FileManager.default.createFile(
-            atPath: input.sessionFilePath,
-            contents: "\(entry)\n".data(using: .utf8)
-        )
+/// Uses `O_APPEND` for atomic writes safe against concurrent processes.
+///
+/// - Parameters:
+///   - input: The parsed hook input containing the session file path.
+///   - entry: The tool name to add to the session's approved list.
+private func saveToSessionFile(input: HookInput, entry: String) {
+    guard let path = input.sessionFilePath else { return }
+    try? FileManager.default.createDirectory(
+        atPath: HookInput.sessionDirectory, withIntermediateDirectories: true
+    )
+    guard let data = "\(entry)\n".data(using: .utf8) else { return }
+    let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
+    if fd >= 0 {
+        data.withUnsafeBytes { _ = write(fd, $0.baseAddress!, data.count) }
+        close(fd)
     }
 }
 
@@ -202,7 +272,11 @@ func saveToSessionFile(input: HookInput, entry: String) {
 ///
 /// This persists the allow rule across sessions for the current project directory.
 /// Rules follow Claude Code's format (e.g., `"Bash(echo *)"`, `"WebFetch(domain:example.com)"`).
-func saveToLocalSettings(input: HookInput, rule: String) {
+///
+/// - Parameters:
+///   - input: The parsed hook input containing the project working directory.
+///   - rule: The permission rule string to add (e.g., `"Bash(git *)"`, `"WebFetch"`).
+private func saveToLocalSettings(input: HookInput, rule: String) {
     let settingsDir = input.cwd + "/.claude"
     let settingsPath = settingsDir + "/settings.local.json"
     try? FileManager.default.createDirectory(atPath: settingsDir, withIntermediateDirectories: true)
@@ -226,14 +300,27 @@ func saveToLocalSettings(input: HookInput, rule: String) {
 
 // MARK: - Hook Response Output
 
-/// Writes the hook response JSON to stdout and exits.
-func writeHookResponse(decision: String, reason: String) {
+/// Writes the hook response JSON to stdout.
+///
+/// Falls back to a hardcoded deny JSON string if serialization fails.
+///
+/// - Parameters:
+///   - decision: The permission decision — `"allow"` or `"deny"`.
+///   - reason: A human-readable reason string explaining the decision.
+private func writeHookResponse(decision: String, reason: String) {
     let response: [String: Any] = ["hookSpecificOutput": [
         "hookEventName": "PreToolUse",
         "permissionDecision": decision,
         "permissionDecisionReason": reason,
     ]]
-    FileHandle.standardOutput.write(try! JSONSerialization.data(withJSONObject: response))
+    if let data = try? JSONSerialization.data(withJSONObject: response) {
+        FileHandle.standardOutput.write(data)
+    } else {
+        let fallback = """
+        {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Internal error: failed to serialize response"}}
+        """
+        FileHandle.standardOutput.write(fallback.data(using: .utf8)!)
+    }
 }
 
 // MARK: - Gist Generation
@@ -242,7 +329,10 @@ func writeHookResponse(decision: String, reason: String) {
 ///
 /// For Bash commands, extracts just the command names joined by shell operators
 /// (e.g., `cd && swiftc` instead of the full command with arguments).
-func buildGist(input: HookInput) -> String {
+///
+/// - Parameter input: The parsed hook input containing the tool name and parameters.
+/// - Returns: A concise human-readable summary of the operation.
+private func buildGist(input: HookInput) -> String {
     switch input.toolName {
     case "Bash":
         let cmd = input.toolInput["command"] as? String ?? ""
@@ -263,7 +353,7 @@ func buildGist(input: HookInput) -> String {
         return input.toolInput["description"] as? String ?? "Launch agent"
     case "WebFetch":
         let url = input.toolInput["url"] as? String ?? ""
-        return "Fetch \(url.count > 60 ? String(url.prefix(57)) + "..." : url)"
+        return "Fetch \(url.count > Layout.maxGistUrlLength ? String(url.prefix(Layout.gistUrlTruncLength)) + "..." : url)"
     case "WebSearch":
         return "Search: \(input.toolInput["query"] as? String ?? "")"
     case "Glob":
@@ -317,7 +407,12 @@ private func summarizeBashCommand(_ cmd: String) -> String {
 /// Parses ANSI escape codes in a string and returns a colored attributed string.
 ///
 /// Supports standard (30–37) and bright (90–97) foreground color codes, plus reset (0, 39).
-func parseAnsiCodes(_ raw: String, defaultColor: NSColor = Theme.codeText) -> NSAttributedString {
+///
+/// - Parameters:
+///   - raw: The raw string potentially containing ANSI escape sequences.
+///   - defaultColor: The base text color used when no ANSI code is active.
+/// - Returns: An `NSAttributedString` with monospaced font and ANSI-derived colors.
+private func parseAnsiCodes(_ raw: String, defaultColor: NSColor = Theme.codeText) -> NSAttributedString {
     let result = NSMutableAttributedString()
     var currentColor = defaultColor
     let segments = raw.components(separatedBy: "\u{1b}[")
@@ -386,7 +481,10 @@ private let bashKeywords: Set<String> = [
 ///
 /// Colors: commands (cyan), keywords (purple), flags (blue), strings (green),
 /// pipes/operators (amber), comments (gray).
-func highlightBash(_ cmd: String) -> NSAttributedString {
+///
+/// - Parameter cmd: The raw Bash command string to highlight.
+/// - Returns: An `NSAttributedString` with per-token syntax coloring.
+private func highlightBash(_ cmd: String) -> NSAttributedString {
     let result = NSMutableAttributedString()
     let lines = cmd.components(separatedBy: "\n")
 
@@ -462,13 +560,28 @@ private func highlightBashLine(_ line: String, into result: NSMutableAttributedS
 
 /// Computes a line-level diff between two strings using the LCS (Longest Common Subsequence) algorithm.
 ///
-/// Long runs of unchanged context (>5 lines) are collapsed with an ellipsis marker.
+/// Long runs of unchanged context lines are collapsed with an ellipsis marker.
 /// The output matches the style of a unified diff: context, removals (-), and additions (+).
-func computeLineDiff(old oldStr: String, new newStr: String) -> [DiffOp] {
+/// If either input exceeds `Layout.maxDiffLines`, returns a simple removal/addition pair instead
+/// of computing the full LCS to avoid excessive memory usage.
+///
+/// - Parameters:
+///   - oldStr: The original text (before the edit).
+///   - newStr: The replacement text (after the edit).
+/// - Returns: An array of `DiffOp` values representing context, removals, and additions.
+private func computeLineDiff(old oldStr: String, new newStr: String) -> [DiffOp] {
     let oldLines = oldStr.components(separatedBy: "\n")
     let newLines = newStr.components(separatedBy: "\n")
     let m = oldLines.count
     let n = newLines.count
+
+    // Guard against excessive memory usage for very large diffs
+    if m > Layout.maxDiffLines || n > Layout.maxDiffLines {
+        var ops = [DiffOp]()
+        for line in oldLines { ops.append(.removal(line)) }
+        for line in newLines { ops.append(.addition(line)) }
+        return ops
+    }
 
     // Build LCS dynamic programming table
     var dp = Array(repeating: Array(repeating: 0, count: n + 1), count: m + 1)
@@ -500,18 +613,18 @@ func computeLineDiff(old oldStr: String, new newStr: String) -> [DiffOp] {
     return collapseContext(ops)
 }
 
-/// Collapses long runs of unchanged context lines (>5) into an ellipsis marker.
+/// Collapses long runs of unchanged context lines into an ellipsis marker.
 private func collapseContext(_ ops: [DiffOp]) -> [DiffOp] {
     var result = [DiffOp]()
     var contextRun = [String]()
 
     func flushContext() {
-        if contextRun.count <= 5 {
+        if contextRun.count <= Layout.contextCollapseThreshold {
             for line in contextRun { result.append(.context(line)) }
         } else {
-            for line in contextRun.prefix(3) { result.append(.context(line)) }
+            for line in contextRun.prefix(Layout.contextPrefixLines) { result.append(.context(line)) }
             result.append(.context("\u{2026}"))  // Ellipsis marker
-            for line in contextRun.suffix(2) { result.append(.context(line)) }
+            for line in contextRun.suffix(Layout.contextSuffixLines) { result.append(.context(line)) }
         }
         contextRun.removeAll()
     }
@@ -530,8 +643,13 @@ private func collapseContext(_ ops: [DiffOp]) -> [DiffOp] {
 
 /// Finds the 1-based starting line number of `oldString` within a file.
 ///
-/// Performs an exact multi-line match against the file contents. Returns 1 if not found.
-func findStartLine(filePath: String, oldString: String) -> Int {
+/// Performs an exact multi-line match against the file contents.
+///
+/// - Parameters:
+///   - filePath: Absolute path to the file to search.
+///   - oldString: The multi-line text to locate in the file.
+/// - Returns: The 1-based line number where the match starts, or `1` if not found.
+private func findStartLine(filePath: String, oldString: String) -> Int {
     guard let content = try? String(contentsOfFile: filePath, encoding: .utf8) else { return 1 }
     let fileLines = content.components(separatedBy: "\n")
     let searchLines = oldString.components(separatedBy: "\n")
@@ -555,7 +673,10 @@ func findStartLine(filePath: String, oldString: String) -> Int {
 ///
 /// Each tool type has custom rendering: Bash gets syntax highlighting, Edit gets a unified
 /// diff with line numbers, Write shows a preview, and others show relevant metadata.
-func buildContent(input: HookInput) -> NSAttributedString {
+///
+/// - Parameter input: The parsed hook input containing tool name and parameters.
+/// - Returns: An `NSAttributedString` with the formatted content for display in the code block.
+private func buildContent(input: HookInput) -> NSAttributedString {
     let result = NSMutableAttributedString()
 
     /// Appends a label line (dim monospaced text).
@@ -611,8 +732,10 @@ func buildContent(input: HookInput) -> NSAttributedString {
         if let path = input.toolInput["file_path"] as? String { appendFilePath(path); appendNewline() }
         if let content = input.toolInput["content"] as? String {
             let lines = content.components(separatedBy: "\n")
-            for line in lines.prefix(50) { appendCode(line) }
-            if lines.count > 50 { appendLabel("... (\(lines.count - 50) more lines)") }
+            for line in lines.prefix(Layout.writePreviewLines) { appendCode(line) }
+            if lines.count > Layout.writePreviewLines {
+                appendLabel("... (\(lines.count - Layout.writePreviewLines) more lines)")
+            }
         }
 
     case "Read":
@@ -668,7 +791,10 @@ func buildContent(input: HookInput) -> NSAttributedString {
     return result
 }
 
-/// Renders a unified diff into an attributed string with line numbers and color coding.
+/// Renders a unified diff into an attributed string with dual line numbers and color coding.
+///
+/// Uses separate counters for old-file and new-file line numbers so that additions
+/// and removals display their correct positions in each file.
 private func renderUnifiedDiff(
     _ ops: [DiffOp],
     startLine: Int,
@@ -678,21 +804,22 @@ private func renderUnifiedDiff(
 ) {
     let oldCount = oldStr.components(separatedBy: "\n").count
     let newCount = newStr.components(separatedBy: "\n").count
-    let maxLineNo = startLine + max(oldCount, newCount) + 5
-    let gutterWidth = max(3, String(maxLineNo).count)
-    var lineNo = startLine
+    let maxLineNo = startLine + max(oldCount, newCount) + Layout.gutterPadding
+    let gutterWidth = max(Layout.minGutterWidth, String(maxLineNo).count)
+    var oldLineNo = startLine
+    var newLineNo = startLine
 
     for op in ops {
         let line = NSMutableAttributedString()
         switch op {
         case .removal(let text):
-            appendDiffLine(into: line, lineNo: lineNo, gutterWidth: gutterWidth,
+            appendDiffLine(into: line, lineNo: oldLineNo, gutterWidth: gutterWidth,
                            prefix: "- ", text: text, color: Theme.diffRemoved)
-            lineNo += 1
+            oldLineNo += 1
         case .addition(let text):
-            appendDiffLine(into: line, lineNo: lineNo, gutterWidth: gutterWidth,
+            appendDiffLine(into: line, lineNo: newLineNo, gutterWidth: gutterWidth,
                            prefix: "+ ", text: text, color: Theme.diffAdded)
-            lineNo += 1
+            newLineNo += 1
         case .context(let text):
             if text == "\u{2026}" {
                 let padding = String(repeating: " ", count: gutterWidth)
@@ -701,9 +828,10 @@ private func renderUnifiedDiff(
                     attributes: [.font: Theme.mono, .foregroundColor: Theme.diffEllipsis]
                 ))
             } else {
-                appendDiffLine(into: line, lineNo: lineNo, gutterWidth: gutterWidth,
+                appendDiffLine(into: line, lineNo: oldLineNo, gutterWidth: gutterWidth,
                                prefix: "  ", text: text, color: Theme.diffContext)
-                lineNo += 1
+                oldLineNo += 1
+                newLineNo += 1
             }
         }
         result.append(line)
@@ -745,7 +873,10 @@ private func appendDiffLine(
 /// - **WebFetch:** Adds a domain allow rule to project settings
 /// - **WebSearch:** Adds a tool allow rule to project settings
 /// - **Default:** Allows the tool for the current session
-func buildPermOptions(input: HookInput) -> [PermOption] {
+///
+/// - Parameter input: The parsed hook input containing tool name and parameters.
+/// - Returns: An array of `PermOption` values for display as dialog buttons.
+private func buildPermOptions(input: HookInput) -> [PermOption] {
     switch input.toolName {
     case "Bash":
         let cmd = input.toolInput["command"] as? String ?? ""
@@ -799,7 +930,10 @@ func buildPermOptions(input: HookInput) -> [PermOption] {
 ///
 /// Uses a greedy algorithm: adds buttons left-to-right until the row is full (by count or width),
 /// then starts a new row. Buttons within a row are stretched to fill the available width equally.
-func computeButtonRows(options: [PermOption]) -> (rows: [[Int]], totalHeight: CGFloat) {
+///
+/// - Parameter options: The permission options whose labels determine button widths.
+/// - Returns: A tuple of row layouts (indices into `options`) and the total height in points.
+private func computeButtonRows(options: [PermOption]) -> (rows: [[Int]], totalHeight: CGFloat) {
     let availableWidth = Layout.panelWidth - Layout.buttonMargin * 2
     let naturalWidths = options.map { opt in
         (opt.label as NSString).size(withAttributes: [.font: Theme.buttonFont]).width + Layout.buttonPadding * 2
@@ -824,7 +958,7 @@ func computeButtonRows(options: [PermOption]) -> (rows: [[Int]], totalHeight: CG
 
     let numRows = rows.count
     let totalHeight = CGFloat(numRows) * Layout.buttonHeight
-        + CGFloat(max(0, numRows - 1)) * Layout.buttonGap + 12
+        + CGFloat(max(0, numRows - 1)) * Layout.buttonGap + Layout.buttonRowsBottomPadding
 
     return (rows, totalHeight)
 }
@@ -832,7 +966,12 @@ func computeButtonRows(options: [PermOption]) -> (rows: [[Int]], totalHeight: CG
 // MARK: - Content Measurement
 
 /// Measures the natural height of an attributed string when rendered at the given width.
-func measureContentHeight(_ content: NSAttributedString, width: CGFloat) -> CGFloat {
+///
+/// - Parameters:
+///   - content: The attributed string to measure.
+///   - width: The available horizontal space in points.
+/// - Returns: The required height in points, including vertical padding.
+private func measureContentHeight(_ content: NSAttributedString, width: CGFloat) -> CGFloat {
     let textStorage = NSTextStorage(attributedString: content)
     let layoutManager = NSLayoutManager()
     textStorage.addLayoutManager(layoutManager)
@@ -840,14 +979,16 @@ func measureContentHeight(_ content: NSAttributedString, width: CGFloat) -> CGFl
     textContainer.widthTracksTextView = true
     layoutManager.addTextContainer(textContainer)
     layoutManager.ensureLayout(for: textContainer)
-    return layoutManager.usedRect(for: textContainer).height + 24
+    return layoutManager.usedRect(for: textContainer).height + Layout.contentMeasurePadding
 }
 
 // MARK: - Focus Management
 
 /// Activates the application and brings the panel to front with keyboard focus.
+///
+/// - Parameter panel: The `NSPanel` to make key and bring to front.
 private func activatePanel(_ panel: NSPanel) {
-    NSApp.activate(ignoringOtherApps: true)
+    NSApp.activate()
     panel.makeKeyAndOrderFront(nil)
 }
 
@@ -856,7 +997,7 @@ private func activatePanel(_ panel: NSPanel) {
 /// Uses `pgrep` to find other `claude-approve` processes and sends `SIGUSR1`
 /// to the one with the lowest PID, creating an orderly activation queue so
 /// dialogs take focus one at a time without fighting.
-func notifyNextSiblingDialog() {
+private func notifyNextSiblingDialog() {
     let myPid = ProcessInfo.processInfo.processIdentifier
     let pipe = Pipe()
     let pgrep = Process()
@@ -886,7 +1027,16 @@ func notifyNextSiblingDialog() {
 /// - Scrollable code block with tool-specific content
 /// - Permission buttons in rows (max 2 per row)
 /// - Keyboard shortcuts (1–3, Enter, Esc)
-func showPermissionDialog(
+///
+/// - Parameters:
+///   - input: The parsed hook input for header display (project name, path).
+///   - options: Permission options to display as buttons.
+///   - content: The attributed string to show in the scrollable code block.
+///   - gist: A short summary string shown next to the tool tag pill.
+///   - buttonRows: Pre-computed row layout (indices into `options`).
+///   - optionsHeight: Pre-computed total height for the button area.
+/// - Returns: The `resultKey` of the selected `PermOption`, or `"deny"` on timeout/escape.
+private func showPermissionDialog(
     input: HookInput,
     options: [PermOption],
     content: NSAttributedString,
@@ -894,13 +1044,12 @@ func showPermissionDialog(
     buttonRows: [[Int]],
     optionsHeight: CGFloat
 ) -> String {
-    var dialogResult = "deny"
     let hasContent = content.length > 0
 
     // Calculate code block height
-    let screenHeight = NSScreen.main?.visibleFrame.height ?? 800
-    let maxContentHeight = min(Layout.maxCodeBlockHeight, screenHeight * 0.5)
-    let naturalHeight = hasContent ? measureContentHeight(content, width: Layout.panelWidth - 56) : 0
+    let screenHeight = NSScreen.main?.visibleFrame.height ?? Layout.fallbackScreenHeight
+    let maxContentHeight = min(Layout.maxCodeBlockHeight, screenHeight * Layout.maxScreenFraction)
+    let naturalHeight = hasContent ? measureContentHeight(content, width: Layout.panelWidth - Layout.codeContentInset) : 0
     let codeBlockHeight = hasContent ? max(Layout.minCodeBlockHeight, min(naturalHeight, maxContentHeight)) : CGFloat(0)
 
     // Total panel height
@@ -937,47 +1086,53 @@ func showPermissionDialog(
     contentView.layer?.backgroundColor = Theme.background.cgColor
     panel.contentView = contentView
 
-    var yPos = panelHeight - 14
+    var yPos = panelHeight - Layout.panelTopPadding
 
     // --- Header: project name ---
-    yPos -= 28
+    yPos -= Layout.projectHeight
     let projectLabel = NSTextField(labelWithString: input.projectName)
-    projectLabel.font = NSFont.systemFont(ofSize: 20, weight: .bold)
+    projectLabel.font = NSFont.systemFont(ofSize: Layout.projectFontSize, weight: .bold)
     projectLabel.textColor = Theme.textPrimary
-    projectLabel.frame = NSRect(x: 16, y: yPos, width: Layout.panelWidth - 32, height: 28)
+    projectLabel.frame = NSRect(x: Layout.panelMargin, y: yPos,
+                                width: Layout.panelWidth - Layout.panelMargin * 2,
+                                height: Layout.projectHeight)
     projectLabel.lineBreakMode = .byTruncatingTail
     contentView.addSubview(projectLabel)
 
     // --- Header: full path ---
-    yPos -= 18
+    yPos -= Layout.pathHeight
     let pathLabel = NSTextField(labelWithString: input.cwd)
-    pathLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
+    pathLabel.font = NSFont.systemFont(ofSize: Layout.pathFontSize, weight: .regular)
     pathLabel.textColor = Theme.textSecondary
-    pathLabel.frame = NSRect(x: 16, y: yPos, width: Layout.panelWidth - 32, height: 16)
+    pathLabel.frame = NSRect(x: Layout.panelMargin, y: yPos,
+                             width: Layout.panelWidth - Layout.panelMargin * 2,
+                             height: Layout.pathLineHeight)
     pathLabel.lineBreakMode = .byTruncatingMiddle
     contentView.addSubview(pathLabel)
 
     // --- Separator ---
-    yPos -= 10
-    let separator = NSBox(frame: NSRect(x: 12, y: yPos, width: Layout.panelWidth - 24, height: 1))
+    yPos -= Layout.sectionGap
+    let separator = NSBox(frame: NSRect(x: Layout.panelInset, y: yPos,
+                                        width: Layout.panelWidth - Layout.panelInset * 2, height: 1))
     separator.boxType = .separator
     contentView.addSubview(separator)
 
     // --- Tool tag pill + gist ---
-    yPos -= 10
-    yPos -= 26
+    yPos -= Layout.sectionGap
+    yPos -= Layout.tagButtonHeight
     let tagColor = Theme.tagColor(for: input.toolName)
-    let tagFont = NSFont.systemFont(ofSize: 13, weight: .bold)
+    let tagFont = NSFont.systemFont(ofSize: Layout.tagFontSize, weight: .bold)
     let tagTextWidth = (input.toolName as NSString).size(withAttributes: [.font: tagFont]).width
-    let tagWidth = tagTextWidth + 20
+    let tagWidth = tagTextWidth + Layout.tagTextPadding
 
-    let tagPill = NSButton(frame: NSRect(x: 16, y: yPos, width: tagWidth, height: Layout.tagButtonHeight))
+    let tagPill = NSButton(frame: NSRect(x: Layout.panelMargin, y: yPos,
+                                         width: tagWidth, height: Layout.tagButtonHeight))
     tagPill.title = input.toolName
     tagPill.bezelStyle = .rounded
     tagPill.isBordered = false
     tagPill.wantsLayer = true
     tagPill.layer?.cornerRadius = Layout.tagCornerRadius
-    tagPill.layer?.backgroundColor = tagColor.withAlphaComponent(0.18).cgColor
+    tagPill.layer?.backgroundColor = tagColor.withAlphaComponent(Theme.buttonRestAlpha).cgColor
     tagPill.font = tagFont
     tagPill.contentTintColor = tagColor
     tagPill.focusRingType = .none
@@ -985,38 +1140,40 @@ func showPermissionDialog(
     contentView.addSubview(tagPill)
 
     let gistLabel = NSTextField(labelWithString: gist)
-    gistLabel.font = NSFont.systemFont(ofSize: 15, weight: .bold)
+    gistLabel.font = NSFont.systemFont(ofSize: Layout.gistFontSize, weight: .bold)
     gistLabel.textColor = Theme.textPrimary
     gistLabel.sizeToFit()
     let gistNaturalHeight = gistLabel.frame.height
     gistLabel.frame = NSRect(
-        x: 16 + tagWidth + 10,
-        y: yPos + (26 - gistNaturalHeight) / 2,
-        width: Layout.panelWidth - 42 - tagWidth,
+        x: Layout.panelMargin + tagWidth + Layout.tagGistGap,
+        y: yPos + (Layout.tagButtonHeight - gistNaturalHeight) / 2,
+        width: Layout.panelWidth - Layout.gistTrailingPadding - tagWidth,
         height: gistNaturalHeight
     )
     gistLabel.lineBreakMode = .byTruncatingTail
     contentView.addSubview(gistLabel)
 
     // --- Code block ---
-    yPos -= hasContent ? 8 : 0
+    yPos -= hasContent ? Layout.codeBlockGap : 0
     let codeBlockBottom = yPos - codeBlockHeight
 
     if hasContent {
         let codeContainer = NSView(frame: NSRect(
-            x: 12, y: codeBlockBottom,
-            width: Layout.panelWidth - 24, height: codeBlockHeight
+            x: Layout.panelInset, y: codeBlockBottom,
+            width: Layout.panelWidth - Layout.panelInset * 2, height: codeBlockHeight
         ))
         codeContainer.wantsLayer = true
         codeContainer.layer?.backgroundColor = Theme.codeBackground.cgColor
         codeContainer.layer?.cornerRadius = Layout.codeCornerRadius
-        codeContainer.layer?.borderWidth = 1
+        codeContainer.layer?.borderWidth = Layout.codeBorderWidth
         codeContainer.layer?.borderColor = Theme.border.cgColor
         contentView.addSubview(codeContainer)
 
+        let borderInset = Layout.codeBorderWidth
         let scrollView = NSScrollView(frame: NSRect(
-            x: 1, y: 1,
-            width: codeContainer.frame.width - 2, height: codeContainer.frame.height - 2
+            x: borderInset, y: borderInset,
+            width: codeContainer.frame.width - borderInset * 2,
+            height: codeContainer.frame.height - borderInset * 2
         ))
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
@@ -1027,7 +1184,7 @@ func showPermissionDialog(
         let layoutManager = NSLayoutManager()
         textStorage.addLayoutManager(layoutManager)
         let textContainer = NSTextContainer(size: NSSize(
-            width: scrollView.frame.width - 22, height: .greatestFiniteMagnitude
+            width: scrollView.frame.width - Layout.codeScrollerWidth, height: .greatestFiniteMagnitude
         ))
         textContainer.widthTracksTextView = true
         layoutManager.addTextContainer(textContainer)
@@ -1043,8 +1200,8 @@ func showPermissionDialog(
         layoutManager.ensureLayout(for: textContainer)
 
         let textHeight = layoutManager.usedRect(for: textContainer).height
-        let verticalPadding = max(8, (scrollView.frame.height - textHeight) / 2)
-        textView.textContainerInset = NSSize(width: 8, height: verticalPadding)
+        let verticalPadding = max(Layout.minVerticalPadding, (scrollView.frame.height - textHeight) / 2)
+        textView.textContainerInset = NSSize(width: Layout.codeTextInset, height: verticalPadding)
         textView.autoresizingMask = [.width]
         textView.frame.size.height = max(textHeight + verticalPadding * 2, scrollView.frame.height)
 
@@ -1055,12 +1212,11 @@ func showPermissionDialog(
     // --- Permission buttons ---
     class ButtonHandler: NSObject {
         var options: [PermOption]
-        var result: UnsafeMutablePointer<String>
+        var result: String = "deny"
         var buttons: [NSButton] = []
         private var pressing = false
-        init(options: [PermOption], result: UnsafeMutablePointer<String>) {
+        init(options: [PermOption]) {
             self.options = options
-            self.result = result
         }
         /// Visually depresses a button, then dismisses the dialog after a brief pause.
         ///
@@ -1071,7 +1227,7 @@ func showPermissionDialog(
             pressing = true
             let button = buttons[index]
             let option = options[index]
-            result.pointee = option.resultKey
+            result = option.resultKey
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             button.layer?.backgroundColor = option.color.withAlphaComponent(Theme.buttonPressAlpha).cgColor
@@ -1087,15 +1243,11 @@ func showPermissionDialog(
         }
     }
 
-    let handler = ButtonHandler(
-        options: options,
-        result: UnsafeMutablePointer<String>.allocate(capacity: 1)
-    )
-    handler.result.initialize(to: "deny")
+    let handler = ButtonHandler(options: options)
 
     let availableWidth = Layout.panelWidth - Layout.buttonMargin * 2
     for (rowIndex, row) in buttonRows.enumerated() {
-        let rowY = codeBlockBottom - 10 - Layout.buttonHeight - CGFloat(rowIndex) * (Layout.buttonHeight + Layout.buttonGap)
+        let rowY = codeBlockBottom - Layout.buttonTopGap - Layout.buttonHeight - CGFloat(rowIndex) * (Layout.buttonHeight + Layout.buttonGap)
         let totalGaps = Layout.buttonGap * CGFloat(max(0, row.count - 1))
         let buttonWidth = (availableWidth - totalGaps) / CGFloat(row.count)
 
@@ -1147,7 +1299,7 @@ func showPermissionDialog(
 
     // --- Timeout ---
     DispatchQueue.main.asyncAfter(deadline: .now() + Layout.dialogTimeout) {
-        handler.result.pointee = "deny"
+        handler.result = "deny"
         NSApp.stopModal()
     }
 
@@ -1172,30 +1324,30 @@ func showPermissionDialog(
     signalSource.resume()
 
     // --- Show dialog ---
+    defer {
+        panel.orderOut(nil)
+        NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
+        signalSource.cancel()
+        if let monitor = keyboardMonitor { NSEvent.removeMonitor(monitor) }
+        notifyNextSiblingDialog()
+    }
     activatePanel(panel)
     NSApp.runModal(for: panel)
-    panel.orderOut(nil)
 
-    // --- Cleanup and notify next sibling ---
-    NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
-    signalSource.cancel()
-    notifyNextSiblingDialog()
-
-    if let monitor = keyboardMonitor {
-        NSEvent.removeMonitor(monitor)
-    }
-
-    dialogResult = handler.result.pointee
-    handler.result.deallocate()
-    return dialogResult
+    return handler.result
 }
 
 // MARK: - Result Processing
 
 /// Processes the dialog result and persists the user's approval choice.
 ///
-/// Returns the hook decision ("allow"/"deny") and a human-readable reason string.
-func processResult(resultKey: String, input: HookInput) -> (decision: String, reason: String) {
+/// Handles session-level and project-level persistence based on the selected option.
+///
+/// - Parameters:
+///   - resultKey: The `resultKey` from the selected `PermOption`.
+///   - input: The parsed hook input for persistence (session file, project settings).
+/// - Returns: A tuple of the hook decision (`"allow"` or `"deny"`) and a reason string.
+private func processResult(resultKey: String, input: HookInput) -> (decision: String, reason: String) {
     switch resultKey {
     case "allow_once":
         return ("allow", "Allowed once via dialog")

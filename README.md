@@ -38,6 +38,9 @@ You stop babysitting terminals. You work on whatever you want, and when any Clau
 - **Session memory** — approve a tool once for the session and it won't ask again
 - **Project-level persistence** — save permanent rules to `.claude/settings.local.json`
 - **Keyboard shortcuts** — `1`/`2`/`3` to pick an option, `Enter` to accept, `Esc` to reject
+- **Button press feedback** — visual highlight on both mouse click and keyboard shortcut
+- **Multi-dialog queuing** — when multiple dialogs appear, they activate one at a time via SIGUSR1 signaling
+- **Space-switch resilience** — dialog automatically regains focus when switching macOS desktops
 - Notification sound to grab your attention
 
 ## Install
@@ -160,16 +163,21 @@ settings.json              # Claude Code configuration with hook setup
 |---------|---------|
 | **Models** | `HookInput`, `PermOption`, `DiffOp` data types |
 | **Theme** | Complete dark-mode color palette and typography |
-| **Layout** | Panel dimensions, spacing, and sizing constants |
+| **Layout** | Panel dimensions, spacing, timing, and sizing constants |
 | **Input Parsing** | Reads and deserializes hook JSON from stdin |
 | **Session Management** | Auto-approve checks, session/project persistence |
+| **Hook Response Output** | JSON response serialization to stdout |
 | **Gist Generation** | One-line tool summaries (e.g., `cd && swiftc`) |
 | **Syntax Highlighting** | Bash tokenizer + ANSI escape code parser |
 | **Diff Engine** | LCS-based unified diff with context collapsing |
 | **Content Rendering** | Per-tool attributed string builders |
 | **Permission Options** | Tool-specific button generation |
+| **Button Layout** | Greedy row-packing algorithm for permission buttons |
+| **Content Measurement** | Text height calculation for code block sizing |
+| **Focus Management** | SIGUSR1 sibling signaling + Space-switch re-activation |
 | **Dialog Construction** | NSPanel layout, button rows, keyboard handling |
 | **Result Processing** | Persists approvals, writes hook response |
+| **Main Entry Point** | Top-level execution flow |
 
 ## Requirements
 
