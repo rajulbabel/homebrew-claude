@@ -652,6 +652,16 @@ func buildContent(input: HookInput) -> NSAttributedString {
         }
     }
 
+    // Trim trailing newlines to prevent extra blank line at bottom of code block
+    while result.length > 0 {
+        let last = result.attributedSubstring(from: NSRange(location: result.length - 1, length: 1)).string
+        if last == "\n" {
+            result.deleteCharacters(in: NSRange(location: result.length - 1, length: 1))
+        } else {
+            break
+        }
+    }
+
     return result
 }
 
