@@ -282,8 +282,14 @@ func buildContent() -> NSAttributedString {
     case "Bash":
         if let d = toolInput["description"] as? String, !d.isEmpty { lbl(d); nl() }
         if let c = toolInput["command"] as? String {
-            r.append(highlightBash(c))
-            r.append(NSAttributedString(string: "\n", attributes: [.font: mono]))
+            let lines = c.components(separatedBy: "\n")
+            let isMultiLine = lines.count > 1
+            let isTruncated = (lines.first ?? "").count > 80
+            // Only show in content area if multi-line, truncated, or has description
+            if isMultiLine || isTruncated || (toolInput["description"] as? String)?.isEmpty == false {
+                r.append(highlightBash(c))
+                r.append(NSAttributedString(string: "\n", attributes: [.font: mono]))
+            }
         }
     case "Edit":
         let filePath = toolInput["file_path"] as? String ?? ""
@@ -470,10 +476,11 @@ measureTC.widthTracksTextView = true; measureLay.addTextContainer(measureTC)
 measureLay.ensureLayout(for: measureTC)
 let naturalContentH = measureLay.usedRect(for: measureTC).height + 24
 
-// Clamp: min 36, max 400
+// Clamp: min 0 (hidden if empty), max 400
 let screenH = NSScreen.main?.visibleFrame.height ?? 800
 let maxContentH = min(400, screenH * 0.5)
-let codeBlockH = max(36, min(naturalContentH, maxContentH))
+let hasContent = contentAttr.length > 0
+let codeBlockH = hasContent ? max(36, min(naturalContentH, maxContentH)) : CGFloat(0)
 
 // Total: top(14) + project(28) + path(18) + gap(10) + sep(1) + gap(10) + toolGist(26) + gap(8) + code + gap(10) + buttons + bottom(6)
 let fixedChrome: CGFloat = 14 + 28 + 18 + 10 + 1 + 10 + 26 + 8 + 10 + 6
@@ -489,7 +496,6 @@ panel.level = .floating
 panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 panel.isMovableByWindowBackground = true
 panel.backgroundColor = bgColor
-panel.titlebarAppearsTransparent = true
 panel.titleVisibility = .visible
 panel.appearance = NSAppearance(named: .darkAqua)
 // Center on screen
@@ -577,36 +583,36 @@ gistLabel.frame = NSRect(x: 16 + tagW + 10, y: yp + (rowH - gistNatH) / 2, width
 gistLabel.lineBreakMode = .byTruncatingTail
 cv.addSubview(gistLabel)
 
-// Code block (sized to content)
-yp -= 8
-let codeTop = yp
-let codeBot = codeTop - codeBlockH
-let cH = codeBlockH
+// Code block (sized to content, hidden if empty)
+yp -= hasContent ? 8 : 0
+let codeBot = yp - codeBlockH
 
-let cb = NSView(frame: NSRect(x: 12, y: codeBot, width: pw - 24, height: cH))
-cb.wantsLayer = true
-cb.layer?.backgroundColor = codeBg.cgColor
-cb.layer?.cornerRadius = 6
-cb.layer?.borderWidth = 1
-cb.layer?.borderColor = borderClr.cgColor
-cv.addSubview(cb)
+if hasContent {
+    let cb = NSView(frame: NSRect(x: 12, y: codeBot, width: pw - 24, height: codeBlockH))
+    cb.wantsLayer = true
+    cb.layer?.backgroundColor = codeBg.cgColor
+    cb.layer?.cornerRadius = 6
+    cb.layer?.borderWidth = 1
+    cb.layer?.borderColor = borderClr.cgColor
+    cv.addSubview(cb)
 
-let sv = NSScrollView(frame: NSRect(x: 1, y: 1, width: cb.frame.width - 2, height: cb.frame.height - 2))
-sv.hasVerticalScroller = true; sv.autohidesScrollers = true
-sv.drawsBackground = false; sv.borderType = .noBorder
+    let sv = NSScrollView(frame: NSRect(x: 1, y: 1, width: cb.frame.width - 2, height: cb.frame.height - 2))
+    sv.hasVerticalScroller = true; sv.autohidesScrollers = true
+    sv.drawsBackground = false; sv.borderType = .noBorder
 
-let ts = NSTextStorage(attributedString: contentAttr)
-let lay = NSLayoutManager(); ts.addLayoutManager(lay)
-let tc = NSTextContainer(size: NSSize(width: sv.frame.width - 22, height: .greatestFiniteMagnitude))
-tc.widthTracksTextView = true; lay.addTextContainer(tc)
+    let ts = NSTextStorage(attributedString: contentAttr)
+    let lay = NSLayoutManager(); ts.addLayoutManager(lay)
+    let tc = NSTextContainer(size: NSSize(width: sv.frame.width - 22, height: .greatestFiniteMagnitude))
+    tc.widthTracksTextView = true; lay.addTextContainer(tc)
 
-let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: sv.frame.width, height: sv.frame.height), textContainer: tc)
-tv.isEditable = false; tv.isSelectable = true; tv.drawsBackground = false
-tv.textContainerInset = NSSize(width: 8, height: 8); tv.autoresizingMask = [.width]
-tv.textStorage?.setAttributedString(contentAttr)
-lay.ensureLayout(for: tc)
-tv.frame.size.height = max(lay.usedRect(for: tc).height + 20, sv.frame.height)
-sv.documentView = tv; cb.addSubview(sv)
+    let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: sv.frame.width, height: sv.frame.height), textContainer: tc)
+    tv.isEditable = false; tv.isSelectable = true; tv.drawsBackground = false
+    tv.textContainerInset = NSSize(width: 8, height: 8); tv.autoresizingMask = [.width]
+    tv.textStorage?.setAttributedString(contentAttr)
+    lay.ensureLayout(for: tc)
+    tv.frame.size.height = max(lay.usedRect(for: tc).height + 20, sv.frame.height)
+    sv.documentView = tv; cb.addSubview(sv)
+}
 
 // --- Option buttons (generic row layout) ---
 class BH: NSObject {
