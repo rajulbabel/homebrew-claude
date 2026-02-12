@@ -57,9 +57,32 @@ func buildGist() -> String {
     switch toolName {
     case "Bash":
         let cmd = toolInput["command"] as? String ?? ""
-        let first = cmd.components(separatedBy: "\n").first ?? cmd
-        let short = first.count > 80 ? String(first.prefix(77)) + "..." : first
-        return "Run: \(short)"
+        if let desc = toolInput["description"] as? String, !desc.isEmpty {
+            return desc
+        }
+        // Extract just command names joined by operators
+        let line = cmd.components(separatedBy: "\n").first ?? cmd
+        var summary = [String]()
+        var remaining = line.trimmingCharacters(in: .whitespaces)
+        while !remaining.isEmpty {
+            var matched = false
+            for op in ["&&", "||", "|", ";"] {
+                if let range = remaining.range(of: " \(op) ") {
+                    let seg = String(remaining[remaining.startIndex..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+                    let name = seg.components(separatedBy: .whitespaces).first ?? seg
+                    if !name.isEmpty { summary.append(name) }
+                    summary.append(op)
+                    remaining = String(remaining[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+                    matched = true; break
+                }
+            }
+            if !matched {
+                let name = remaining.components(separatedBy: .whitespaces).first ?? remaining
+                if !name.isEmpty { summary.append(name) }
+                break
+            }
+        }
+        return summary.joined(separator: " ")
     case "Edit":
         let f = (toolInput["file_path"] as? String ?? "") as NSString
         return "Edit \(f.lastPathComponent)"
@@ -280,16 +303,10 @@ func buildContent() -> NSAttributedString {
 
     switch toolName {
     case "Bash":
-        if let d = toolInput["description"] as? String, !d.isEmpty { lbl(d); nl() }
+        // Description already shown in gist — content area only shows the command
         if let c = toolInput["command"] as? String {
-            let lines = c.components(separatedBy: "\n")
-            let isMultiLine = lines.count > 1
-            let isTruncated = (lines.first ?? "").count > 80
-            // Only show in content area if multi-line, truncated, or has description
-            if isMultiLine || isTruncated || (toolInput["description"] as? String)?.isEmpty == false {
-                r.append(highlightBash(c))
-                r.append(NSAttributedString(string: "\n", attributes: [.font: mono]))
-            }
+            r.append(highlightBash(c))
+            r.append(NSAttributedString(string: "\n", attributes: [.font: mono]))
         }
     case "Edit":
         let filePath = toolInput["file_path"] as? String ?? ""
