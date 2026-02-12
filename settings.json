@@ -1,0 +1,31 @@
+{
+  "enabledPlugins" : {
+    "swift-lsp@claude-plugins-official" : true
+  },
+  "hooks" : {
+    "PreToolUse" : [
+      {
+        "hooks" : [
+          {
+            "command" : "~/.claude/hooks/claude-approve",
+            "timeout" : 600,
+            "statusMessage" : "Waiting for approval in dialog...",
+            "type" : "command"
+          }
+        ],
+        "matcher" : "Bash|Edit|Write|Read|NotebookEdit|Task|WebFetch|WebSearch|Glob|Grep"
+      }
+    ]
+  },
+  "model" : "opus",
+  "permissions" : {
+    "allow" : [
+      "WebSearch",
+      "WebFetch(domain:aws.amazon.com)",
+      "WebFetch(domain:www.elastic.co)",
+      "WebFetch(domain:cloud.elastic.co)",
+      "Read"
+    ],
+    "defaultMode" : "default"
+  }
+}
