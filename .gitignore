@@ -1,0 +1,28 @@
+# Claude Code runtime data
+cache/
+debug/
+file-history/
+history.jsonl
+ide/
+image-cache/
+paste-cache/
+plans/
+plugins/
+projects/
+shell-snapshots/
+stats-cache.json
+statsig/
+tasks/
+todos/
+
+# Session data
+/tmp/
+
+# macOS
+.DS_Store
+
+# Experimental/abandoned binaries (not part of the main hook)
+hooks/claude-dialog
+hooks/claude-dialog.swift
+hooks/claude-watcher
+hooks/claude-watcher.swift
