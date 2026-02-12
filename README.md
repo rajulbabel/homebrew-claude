@@ -2,11 +2,36 @@
 
 A macOS native permission dialog for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) hooks. Replaces the terminal-based permission prompts with a floating dialog that works across all macOS Spaces — so you never miss a permission request, even when you're on a different desktop.
 
-## Why
+## The Problem
 
-Claude Code asks for permission before running tools like Bash commands, file edits, and web requests. The default prompt lives inside your terminal — easy to miss if you switch to another Space or app. This hook intercepts those prompts and shows a native macOS dialog instead:
+If you use Claude Code seriously, you're running **multiple sessions in parallel** — one refactoring a backend, another writing tests, a third exploring a codebase. Each session runs in its own terminal tab or window, often across different macOS Spaces or fullscreen apps.
 
-- Floating panel visible on **every Space and fullscreen app**
+Claude Code pauses and waits for your permission before running commands, editing files, or making web requests. But the permission prompt is **buried inside the terminal** — a text-based prompt with no notification, no sound, no visual cue outside that specific tab.
+
+So what actually happens:
+
+1. You kick off a task in Session A and switch to Session B
+2. Session A hits a permission prompt and **silently waits**
+3. You have no idea it's blocked — there's no notification, no dock badge, nothing
+4. Minutes later you check back and realize it's been sitting idle the whole time
+5. Multiply this across 3–4 sessions and you're constantly context-switching just to babysit permission prompts
+
+**You lose track of which sessions need attention.** The more sessions you run, the worse it gets. What should be efficient parallel workflows turns into a game of whack-a-mole — checking tabs, hunting for the one that's waiting for input.
+
+## The Solution
+
+This hook replaces the terminal prompt with a **native macOS dialog** that:
+
+- **Pops up on top of everything** — visible on every Space, every fullscreen app
+- **Plays a sound** — you hear it even when you're not looking at the screen
+- Shows **exactly what Claude wants to do** — syntax-highlighted commands, unified diffs, file paths
+- Lets you **respond with one click or keystroke** — then immediately get back to what you were doing
+
+You stop babysitting terminals. You work on whatever you want, and when any Claude session needs you, it tells you.
+
+## Features
+
+- **Floating panel** visible on every Space and fullscreen app
 - **Syntax-highlighted** Bash commands with keyword, flag, and string coloring
 - **Unified diffs** with line numbers for file edits
 - **Tool-specific buttons** matching Claude Code's native permission options exactly
