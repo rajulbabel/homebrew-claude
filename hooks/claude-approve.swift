@@ -306,7 +306,6 @@ func buildContent() -> NSAttributedString {
         // Description already shown in gist — content area only shows the command
         if let c = toolInput["command"] as? String {
             r.append(highlightBash(c))
-            r.append(NSAttributedString(string: "\n", attributes: [.font: mono]))
         }
     case "Edit":
         let filePath = toolInput["file_path"] as? String ?? ""
@@ -626,10 +625,13 @@ if hasContent {
 
     let tv = NSTextView(frame: NSRect(x: 0, y: 0, width: sv.frame.width, height: sv.frame.height), textContainer: tc)
     tv.isEditable = false; tv.isSelectable = true; tv.drawsBackground = false
-    tv.textContainerInset = NSSize(width: 8, height: 8); tv.autoresizingMask = [.width]
     tv.textStorage?.setAttributedString(contentAttr)
     lay.ensureLayout(for: tc)
-    tv.frame.size.height = max(lay.usedRect(for: tc).height + 20, sv.frame.height)
+    let textH = lay.usedRect(for: tc).height
+    let vertPad = max(8, (sv.frame.height - textH) / 2)
+    tv.textContainerInset = NSSize(width: 8, height: vertPad)
+    tv.autoresizingMask = [.width]
+    tv.frame.size.height = max(textH + vertPad * 2, sv.frame.height)
     sv.documentView = tv; cb.addSubview(sv)
 }
 
