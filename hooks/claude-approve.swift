@@ -42,6 +42,9 @@ struct HookInput {
     /// Directory for session auto-approve files.
     static let sessionDirectory = "/tmp/claude-hook-sessions"
 
+    /// Path to the persistent auto-approve config listing tool names to always allow.
+    static let autoApprovePath = NSString("~/.claude/hooks/auto-approve.json").expandingTildeInPath
+
     /// Project directory name (last path component of `cwd`).
     var projectName: String { (cwd as NSString).lastPathComponent }
 
@@ -244,6 +247,26 @@ private func checkSessionAutoApprove(input: HookInput) -> Bool {
     writeHookResponse(
         decision: "allow",
         reason: "Auto-approved (\(input.toolName) allowed for session)"
+    )
+    return true
+}
+
+/// Checks if the tool is in the persistent always-approve list.
+///
+/// Reads the JSON array from `HookInput.autoApprovePath` and checks if the
+/// current tool name is included. If yes, writes the allow response to stdout.
+///
+/// - Parameter input: The parsed hook input containing the tool name.
+/// - Returns: `true` if the tool was auto-approved (response already written), `false` otherwise.
+private func checkAlwaysApprove(input: HookInput) -> Bool {
+    guard let data = FileManager.default.contents(atPath: HookInput.autoApprovePath),
+          let tools = try? JSONSerialization.jsonObject(with: data) as? [String],
+          tools.contains(input.toolName) else {
+        return false
+    }
+    writeHookResponse(
+        decision: "allow",
+        reason: "Auto-approved (\(input.toolName) in auto-approve.json)"
     )
     return true
 }
@@ -1395,6 +1418,11 @@ private func processResult(resultKey: String, input: HookInput) -> (decision: St
 /// 5. Process the result and write the hook response to stdout
 
 let input = parseHookInput()
+
+// Fast path: skip dialog if tool is in the persistent always-approve list
+if checkAlwaysApprove(input: input) {
+    exit(0)
+}
 
 // Fast path: skip dialog if tool is already approved for this session
 if checkSessionAutoApprove(input: input) {
