@@ -18,10 +18,10 @@ class ClaudePermit < Formula
     end
     prefix.install "hooks"
     prefix.install "install.py"
-  end
-
-  def post_install
-    system "python3", "#{prefix}/install.py"
+    (bin/"claude-permit-setup").write <<~SH
+      #!/bin/bash
+      exec python3 "#{prefix}/install.py"
+    SH
   end
 
   test do
@@ -30,7 +30,9 @@ class ClaudePermit < Formula
 
   def caveats
     <<~EOS
-      Restart Claude Code for the hook to take effect.
+      Run the setup command to install hooks into ~/.claude/:
+        claude-permit-setup
+      Then restart Claude Code for the hook to take effect.
     EOS
   end
 end
