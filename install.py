@@ -175,26 +175,30 @@ def recompile_binaries():
 # ─── Settings ─────────────────────────────────────────────────────────
 
 
-def has_claude_approve(settings):
-    """Check if settings already has a claude-approve hook."""
-    for entry in settings.get("hooks", {}).get("PreToolUse", []):
-        for hook in entry.get("hooks", []):
-            if "claude-approve" in hook.get("command", ""):
-                return True
-    return False
+def remove_our_hooks(hooks):
+    """Strip any hook entries owned by this installer.
 
+    Removes entries whose command references claude-approve (PreToolUse)
+    or claude-stop (Stop), leaving all other user-defined entries intact.
+    Called before re-adding the canonical entries so upgrades always
+    reflect the current config, including matcher or command changes.
+    """
+    def strip(entries, marker):
+        return [
+            e for e in entries
+            if not any(marker in h.get("command", "") for h in e.get("hooks", []))
+        ]
 
-def has_claude_stop(settings):
-    """Check if settings already has a claude-stop Stop hook."""
-    for entry in settings.get("hooks", {}).get("Stop", []):
-        for hook in entry.get("hooks", []):
-            if "claude-stop" in hook.get("command", ""):
-                return True
-    return False
+    hooks["PreToolUse"] = strip(hooks.get("PreToolUse", []), "claude-approve")
+    hooks["Stop"] = strip(hooks.get("Stop", []), "claude-stop")
 
 
 def merge_hook_config():
-    """Add hook entries to settings.json if not already present."""
+    """Replace our hook entries in settings.json with the current canonical config.
+
+    Always removes then re-adds our entries so upgrades stay in sync.
+    User-defined entries for other hooks are left untouched.
+    """
     if os.path.exists(SETTINGS):
         try:
             with open(SETTINGS, encoding="utf-8") as f:
@@ -206,27 +210,18 @@ def merge_hook_config():
         print(f"Creating {SETTINGS}")
         settings = {}
 
-    changed = False
     hooks = settings.setdefault("hooks", {})
+    remove_our_hooks(hooks)
 
-    if has_claude_approve(settings):
-        print(f"PreToolUse hook already configured in {SETTINGS} — skipping")
-    else:
-        print(f"Adding PreToolUse hook config to {SETTINGS}")
-        hooks.setdefault("PreToolUse", []).append(HOOK_ENTRY)
-        changed = True
+    print(f"Writing PreToolUse hook config to {SETTINGS}")
+    hooks.setdefault("PreToolUse", []).append(HOOK_ENTRY)
 
-    if has_claude_stop(settings):
-        print(f"Stop hook already configured in {SETTINGS} — skipping")
-    else:
-        print(f"Adding Stop hook config to {SETTINGS}")
-        hooks.setdefault("Stop", []).append(STOP_HOOK_ENTRY)
-        changed = True
+    print(f"Writing Stop hook config to {SETTINGS}")
+    hooks.setdefault("Stop", []).append(STOP_HOOK_ENTRY)
 
-    if changed:
-        with open(SETTINGS, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=2)
-            f.write("\n")
+    with open(SETTINGS, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+        f.write("\n")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────
