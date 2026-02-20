@@ -15,11 +15,25 @@ This hook replaces those prompts with a **floating macOS dialog** that:
 
 ## Install
 
+**curl (recommended):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rajulbabel/.claude/main/install.py | python3
+```
+
+**Homebrew:**
+
+```bash
+brew install rajulbabel/tap/claude-permit
+```
+
+**git clone:**
+
 ```bash
 git clone git@github.com:rajulbabel/.claude.git /tmp/.claude-hooks && python3 /tmp/.claude-hooks/install.py && rm -rf /tmp/.claude-hooks
 ```
 
-That's it. Restart Claude Code.
+Restart Claude Code after installing.
 
 > **Intel Mac?** Recompile: `cd ~/.claude/hooks && swiftc -framework AppKit -o claude-approve claude-approve.swift`
 
