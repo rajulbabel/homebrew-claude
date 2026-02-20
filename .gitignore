@@ -18,6 +18,12 @@ todos/
 # Session data
 /tmp/
 
+# Personal config
+settings.json
+.claude/
+memory/
+telemetry/
+
 # macOS
 .DS_Store
 
