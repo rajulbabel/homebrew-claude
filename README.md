@@ -18,19 +18,19 @@ This hook replaces those prompts with a **floating macOS dialog** that:
 **curl (recommended):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rajulbabel/.claude/main/install.py | python3
+curl -fsSL https://raw.githubusercontent.com/rajulbabel/homebrew-claude/main/install.py | python3
 ```
 
 **Homebrew:**
 
 ```bash
-brew tap rajulbabel/claude https://github.com/rajulbabel/.claude.git && brew install claude-permit
+brew install rajulbabel/claude/permit
 ```
 
 **git clone:**
 
 ```bash
-git clone git@github.com:rajulbabel/.claude.git /tmp/.claude-hooks && python3 /tmp/.claude-hooks/install.py && rm -rf /tmp/.claude-hooks
+git clone git@github.com:rajulbabel/homebrew-claude.git /tmp/.claude-hooks && python3 /tmp/.claude-hooks/install.py && rm -rf /tmp/.claude-hooks
 ```
 
 Restart Claude Code after installing.

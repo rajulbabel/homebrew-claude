@@ -19,7 +19,7 @@ import urllib.request
 
 # ─── Constants ────────────────────────────────────────────────────────
 
-GITHUB_RAW = "https://raw.githubusercontent.com/rajulbabel/.claude/main"
+GITHUB_RAW = "https://raw.githubusercontent.com/rajulbabel/homebrew-claude/main"
 
 HOOK_FILES = [
     "hooks/claude-approve",

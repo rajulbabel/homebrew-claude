@@ -112,8 +112,8 @@ Reset session approvals first: `rm -rf /tmp/claude-hook-sessions/`
 To publish a new version:
 
 1. Tag the release: `git tag vX.Y.Z && git push origin vX.Y.Z`
-2. Compute the SHA: `curl -fsSL https://github.com/rajulbabel/.claude/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256`
-3. Update `Formula/claude-permit.rb` with the new tag URL, `sha256`, and `version`
+2. Compute the SHA: `curl -fsSL https://github.com/rajulbabel/homebrew-claude/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256`
+3. Update `Formula/permit.rb` with the new tag URL, `sha256`, and `version`
 4. Commit and push the formula update
 
 The tag is immutable, so the SHA will never go stale.
