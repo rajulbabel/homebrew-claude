@@ -67,6 +67,10 @@ class Permit < Formula
     File.delete(sentinel) if File.exist?(sentinel)
   end
 
+  def uninstall
+    system "/usr/bin/python3", "#{prefix}/install.py", "--uninstall"
+  end
+
   test do
     assert_predicate prefix/"hooks/claude-approve", :exist?
   end

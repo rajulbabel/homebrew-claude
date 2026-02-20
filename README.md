@@ -37,6 +37,28 @@ Restart Claude Code after installing.
 
 > **Intel Mac?** Recompile: `cd ~/.claude/hooks && swiftc -framework AppKit -o claude-approve claude-approve.swift`
 
+## Uninstall
+
+**Homebrew:**
+
+```bash
+brew uninstall rajulbabel/claude/permit
+```
+
+**curl:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rajulbabel/homebrew-claude/main/install.py | python3 - --uninstall
+```
+
+**git clone:**
+
+```bash
+python3 /path/to/homebrew-claude/install.py --uninstall
+```
+
+All three remove the hook binaries from `~/.claude/hooks/` and strip the hook entries from `~/.claude/settings.json`. Restart Claude Code after uninstalling.
+
 ## What You Get
 
 | Feature | |

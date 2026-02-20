@@ -6,6 +6,9 @@ Copies hooks and merges config into settings.json.
 Supports two modes:
   - Local: run from a git clone (hooks/ dir exists next to script)
   - Remote: piped via curl (downloads files from GitHub)
+
+Pass --uninstall to remove all hook files and settings entries.
+Works the same way in all three install modes (brew, curl, git clone).
 """
 
 import json
@@ -14,6 +17,7 @@ import platform
 import shutil
 import stat
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 
@@ -49,6 +53,7 @@ SWIFT_BINARIES = [
 
 CLAUDE_DIR = os.path.expanduser("~/.claude")
 SETTINGS = os.path.join(CLAUDE_DIR, "settings.json")
+MANIFEST = os.path.join(CLAUDE_DIR, "hooks", ".permit-manifest")
 
 HOOK_ENTRY = {
     "hooks": [
@@ -96,6 +101,13 @@ def needs_recompile():
 # ─── Hooks: Local ─────────────────────────────────────────────────────
 
 
+def write_manifest(installed_files):
+    """Write a manifest of installed files for use during uninstall."""
+    with open(MANIFEST, "w", encoding="utf-8") as f:
+        json.dump(installed_files, f, indent=2)
+        f.write("\n")
+
+
 def copy_hooks_local():
     """Copy hooks from local clone to ~/.claude/hooks/."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -103,8 +115,10 @@ def copy_hooks_local():
     dst = os.path.realpath(os.path.join(CLAUDE_DIR, "hooks"))
     if src == dst:
         print(f"Hooks already in place at {dst}/")
+        write_manifest(HOOK_FILES)
         return
     os.makedirs(dst, exist_ok=True)
+    installed = []
     for item in os.listdir(src):
         s = os.path.join(src, item)
         d = os.path.join(dst, item)
@@ -112,6 +126,8 @@ def copy_hooks_local():
             shutil.copytree(s, d, dirs_exist_ok=True)
         else:
             shutil.copy2(s, d)
+            installed.append(f"hooks/{item}")
+    write_manifest(installed)
     print(f"Copied hooks to {dst}/")
 
 
@@ -136,6 +152,7 @@ def download_hooks_remote():
         path = os.path.join(CLAUDE_DIR, rel_path)
         st = os.stat(path)
         os.chmod(path, st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    write_manifest(HOOK_FILES)
     print(f"Downloaded hooks to {dst}/")
 
 
@@ -224,10 +241,66 @@ def merge_hook_config():
         f.write("\n")
 
 
+# ─── Uninstall ────────────────────────────────────────────────────────
+
+
+def uninstall_hooks():
+    """Remove installed hook files (per manifest) and our settings entries."""
+    if os.path.exists(MANIFEST):
+        with open(MANIFEST, encoding="utf-8") as f:
+            installed_files = json.load(f)
+        print(f"Using manifest: {MANIFEST}")
+    else:
+        print("No manifest found — falling back to known file list.")
+        installed_files = HOOK_FILES
+
+    removed, missing = [], []
+    for rel_path in installed_files:
+        path = os.path.join(CLAUDE_DIR, rel_path)
+        if os.path.exists(path):
+            os.remove(path)
+            removed.append(rel_path)
+        else:
+            missing.append(rel_path)
+
+    # Remove the manifest itself
+    if os.path.exists(MANIFEST):
+        os.remove(MANIFEST)
+
+    if removed:
+        print(f"Removed: {', '.join(removed)}")
+    if missing:
+        print(f"Already absent: {', '.join(missing)}")
+
+    if not os.path.exists(SETTINGS):
+        print("No settings.json found — nothing to update.")
+    else:
+        try:
+            with open(SETTINGS, encoding="utf-8") as f:
+                settings = json.load(f)
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"Error: {SETTINGS} contains invalid JSON: {e}")
+            raise SystemExit(1)
+
+        hooks = settings.setdefault("hooks", {})
+        remove_our_hooks(hooks)
+        with open(SETTINGS, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+            f.write("\n")
+        print(f"Removed hook entries from {SETTINGS}")
+
+    print("\nDone! Restart Claude Code for changes to take effect.")
+
+
 # ─── Main ─────────────────────────────────────────────────────────────
 
 
 def main():
+    if "--uninstall" in sys.argv:
+        print("Uninstalling claude-permit hooks...")
+        uninstall_hooks()
+        return
+
     if is_local():
         print("Installing from local clone...")
         copy_hooks_local()
