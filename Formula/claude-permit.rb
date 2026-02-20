@@ -7,7 +7,6 @@ class ClaudePermit < Formula
   license "MIT"
 
   depends_on :macos
-  depends_on xcode: :build
 
   def install
     cd "hooks" do

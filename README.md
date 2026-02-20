@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/rajulbabel/.claude/main/install.py 
 **Homebrew:**
 
 ```bash
-brew install rajulbabel/tap/claude-permit
+brew tap rajulbabel/claude https://github.com/rajulbabel/.claude.git && brew install claude-permit
 ```
 
 **git clone:**
