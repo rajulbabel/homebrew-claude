@@ -49,6 +49,8 @@ Restart Claude Code after installing.
 | Project-level persistence | Save permanent rules per project |
 | Multi-dialog queuing | Dialogs appear one at a time, auto-focus |
 | Sound notification | Hear it from any app |
+| Completion notification | "Done" dialog when Claude finishes — auto-dismisses in 15s |
+| Question prompts | `AskUserQuestion` pops up natively — one click jumps back to terminal |
 
 ## Permission Options
 
@@ -60,6 +62,7 @@ Each dialog shows **tool-specific** buttons matching Claude Code's native prompt
 | **Edit / Write** | Allow once · Allow all edits this session |
 | **WebFetch** | Allow once · Allow `<domain>` permanently |
 | **WebSearch** | Allow once · Allow permanently |
+| **AskUserQuestion** | Go to Terminal (jumps to the terminal that launched Claude) |
 | **Other** | Allow once · Allow this session |
 
 Approvals are stored per scope:
@@ -83,7 +86,7 @@ These tools skip the dialog entirely. Remove any you want to approve manually.
 **Change which tools show the dialog** — edit the `matcher` in `~/.claude/settings.json`:
 
 ```json
-"matcher": "Bash|Edit|Write|Read|NotebookEdit|Task|WebFetch|WebSearch|Glob|Grep"
+"matcher": "Bash|Edit|Write|Read|NotebookEdit|Task|WebFetch|WebSearch|Glob|Grep|AskUserQuestion"
 ```
 
 **Timeout** — dialog auto-denies after `timeout` seconds (default: 600).
@@ -102,7 +105,9 @@ Claude wants to run a tool
    Show native dialog ──→ User responds ──→ Allow / Deny
 ```
 
-Uses Claude Code's [PreToolUse hook](https://docs.anthropic.com/en/docs/claude-code/hooks). The installer adds the hook config to your `settings.json` automatically.
+A **Stop hook** also fires after every completed turn, showing a "Done" notification with the last message summary. It auto-dismisses after 15 seconds, or click "Go to Terminal" to jump straight back to your terminal.
+
+Uses Claude Code's [PreToolUse hook](https://docs.anthropic.com/en/docs/claude-code/hooks) and [Stop hook](https://docs.anthropic.com/en/docs/claude-code/hooks). The installer adds both hook configs to your `settings.json` automatically.
 
 ## Requirements
 

@@ -15,6 +15,9 @@ class Permit < Formula
       system "swiftc", "-framework", "AppKit",
              "-o", "claude-notify",
              "claude-notify.swift"
+      system "swiftc", "-framework", "AppKit",
+             "-o", "claude-stop",
+             "claude-stop.swift"
     end
     prefix.install "hooks"
     prefix.install "install.py"

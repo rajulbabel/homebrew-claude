@@ -26,6 +26,8 @@ HOOK_FILES = [
     "hooks/claude-approve.swift",
     "hooks/claude-notify",
     "hooks/claude-notify.swift",
+    "hooks/claude-stop",
+    "hooks/claude-stop.swift",
     "hooks/notify-and-approve.sh",
     "hooks/cleanup-pending.sh",
     "hooks/auto-approve.json",
@@ -34,6 +36,7 @@ HOOK_FILES = [
 EXECUTABLES = [
     "hooks/claude-approve",
     "hooks/claude-notify",
+    "hooks/claude-stop",
     "hooks/notify-and-approve.sh",
     "hooks/cleanup-pending.sh",
 ]
@@ -41,6 +44,7 @@ EXECUTABLES = [
 SWIFT_BINARIES = [
     ("claude-approve.swift", "claude-approve"),
     ("claude-notify.swift", "claude-notify"),
+    ("claude-stop.swift", "claude-stop"),
 ]
 
 CLAUDE_DIR = os.path.expanduser("~/.claude")
@@ -58,7 +62,18 @@ HOOK_ENTRY = {
     "matcher": (
         "Bash|Edit|Write|Read|NotebookEdit"
         "|Task|WebFetch|WebSearch|Glob|Grep"
+        "|AskUserQuestion"
     ),
+}
+
+STOP_HOOK_ENTRY = {
+    "hooks": [
+        {
+            "command": "~/.claude/hooks/claude-stop",
+            "timeout": 15,
+            "type": "command",
+        }
+    ],
 }
 
 # ─── Detection ────────────────────────────────────────────────────────
@@ -169,8 +184,17 @@ def has_claude_approve(settings):
     return False
 
 
+def has_claude_stop(settings):
+    """Check if settings already has a claude-stop Stop hook."""
+    for entry in settings.get("hooks", {}).get("Stop", []):
+        for hook in entry.get("hooks", []):
+            if "claude-stop" in hook.get("command", ""):
+                return True
+    return False
+
+
 def merge_hook_config():
-    """Add the hook entry to settings.json if not already present."""
+    """Add hook entries to settings.json if not already present."""
     if os.path.exists(SETTINGS):
         try:
             with open(SETTINGS, encoding="utf-8") as f:
@@ -182,17 +206,27 @@ def merge_hook_config():
         print(f"Creating {SETTINGS}")
         settings = {}
 
-    if has_claude_approve(settings):
-        print(f"Hook already configured in {SETTINGS} — skipping")
-        return
-
-    print(f"Adding hook config to {SETTINGS}")
+    changed = False
     hooks = settings.setdefault("hooks", {})
-    hooks.setdefault("PreToolUse", []).append(HOOK_ENTRY)
 
-    with open(SETTINGS, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
-        f.write("\n")
+    if has_claude_approve(settings):
+        print(f"PreToolUse hook already configured in {SETTINGS} — skipping")
+    else:
+        print(f"Adding PreToolUse hook config to {SETTINGS}")
+        hooks.setdefault("PreToolUse", []).append(HOOK_ENTRY)
+        changed = True
+
+    if has_claude_stop(settings):
+        print(f"Stop hook already configured in {SETTINGS} — skipping")
+    else:
+        print(f"Adding Stop hook config to {SETTINGS}")
+        hooks.setdefault("Stop", []).append(STOP_HOOK_ENTRY)
+        changed = True
+
+    if changed:
+        with open(SETTINGS, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+            f.write("\n")
 
 
 # ─── Main ─────────────────────────────────────────────────────────────

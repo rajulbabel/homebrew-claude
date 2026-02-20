@@ -108,7 +108,8 @@ enum Theme {
         "WebFetch":  NSColor(calibratedRed: 0.40, green: 0.85, blue: 0.85, alpha: 1),
         "WebSearch": NSColor(calibratedRed: 0.40, green: 0.85, blue: 0.85, alpha: 1),
         "Glob":      NSColor(calibratedRed: 0.65, green: 0.75, blue: 0.85, alpha: 1),
-        "Grep":      NSColor(calibratedRed: 0.65, green: 0.75, blue: 0.85, alpha: 1),
+        "Grep":            NSColor(calibratedRed: 0.65, green: 0.75, blue: 0.85, alpha: 1),
+        "AskUserQuestion": NSColor(calibratedRed: 1.0,  green: 0.80, blue: 0.15, alpha: 1),
     ]
 
     // Bash syntax highlighting
@@ -384,6 +385,14 @@ private func buildGist(input: HookInput) -> String {
         return "Find files: \(input.toolInput["pattern"] as? String ?? "")"
     case "Grep":
         return "Search code: \(input.toolInput["pattern"] as? String ?? "")"
+    case "AskUserQuestion":
+        if let questions = input.toolInput["questions"] as? [[String: Any]] {
+            if questions.count == 1, let q = questions.first?["question"] as? String { return q }
+            let headers = questions.compactMap { $0["header"] as? String }
+            if !headers.isEmpty { return headers.joined(separator: " · ") }
+            return "\(questions.count) questions"
+        }
+        return "Question"
     default:
         return input.toolName
     }
@@ -795,6 +804,24 @@ private func buildContent(input: HookInput) -> NSAttributedString {
         if let path = input.toolInput["path"] as? String { appendLabel("in: \(path)") }
         if let glob = input.toolInput["glob"] as? String { appendLabel("glob: \(glob)") }
 
+    case "AskUserQuestion":
+        if let questions = input.toolInput["questions"] as? [[String: Any]] {
+            for (qi, q) in questions.enumerated() {
+                if qi > 0 { appendNewline() }
+                if let header = q["header"] as? String { appendLabel(header) }
+                if let question = q["question"] as? String { appendCode(question, color: Theme.textPrimary) }
+                appendNewline()
+                if let opts = q["options"] as? [[String: Any]] {
+                    for (oi, opt) in opts.enumerated() {
+                        if let label = opt["label"] as? String { appendCode("  \(oi + 1).  \(label)") }
+                        if let desc = opt["description"] as? String, !desc.isEmpty {
+                            appendLabel("       \(desc)")
+                        }
+                    }
+                }
+            }
+        }
+
     default:
         if let data = try? JSONSerialization.data(withJSONObject: input.toolInput, options: .prettyPrinted),
            let jsonStr = String(data: data, encoding: .utf8) {
@@ -939,6 +966,11 @@ private func buildPermOptions(input: HookInput) -> [PermOption] {
             PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny),
         ]
 
+    case "AskUserQuestion":
+        return [
+            PermOption(label: "Go to Terminal", resultKey: "allow_goto_terminal", color: Theme.buttonAllow),
+        ]
+
     default:
         return [
             PermOption(label: "Yes", resultKey: "allow_once", color: Theme.buttonAllow),
@@ -1016,6 +1048,60 @@ private func activatePanel(_ panel: NSPanel) {
     panel.makeKeyAndOrderFront(nil)
 }
 
+/// Finds and activates the terminal application that spawned this Claude session.
+///
+/// Walks up the process parent chain (up to 15 levels) looking for a running
+/// application whose bundle identifier matches a known terminal emulator. Activating
+/// by exact PID ensures the correct terminal window comes forward even when multiple
+/// terminal types or multiple windows of the same type are open simultaneously.
+/// Falls back to `TERM_PROGRAM` environment variable detection if the walk fails.
+private func openTerminalApp() {
+    let knownTerminals: Set<String> = [
+        "com.apple.Terminal",
+        "com.googlecode.iterm2",
+        "dev.warp.Warp-Stable",
+        "com.microsoft.VSCode",
+        "com.jetbrains.webstorm",
+        "com.jetbrains.rider",
+        "com.jetbrains.idea",
+    ]
+    var pid = ProcessInfo.processInfo.processIdentifier
+    for _ in 0..<15 {
+        guard let ppid = parentProcessID(of: pid), ppid > 1 else { break }
+        pid = ppid
+        if let app = NSRunningApplication(processIdentifier: pid),
+           let bundleId = app.bundleIdentifier,
+           knownTerminals.contains(bundleId) {
+            app.activate()
+            return
+        }
+    }
+    // Fallback: TERM_PROGRAM env var
+    let bundleId: String
+    switch ProcessInfo.processInfo.environment["TERM_PROGRAM"] ?? "" {
+    case "iTerm.app":    bundleId = "com.googlecode.iterm2"
+    case "WarpTerminal": bundleId = "dev.warp.Warp-Stable"
+    case "vscode":       bundleId = "com.microsoft.VSCode"
+    default:             bundleId = "com.apple.Terminal"
+    }
+    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+        NSWorkspace.shared.open(url)
+    }
+}
+
+/// Returns the parent process ID of `pid` by invoking `/bin/ps`.
+private func parentProcessID(of pid: pid_t) -> pid_t? {
+    let pipe = Pipe()
+    let ps = Process()
+    ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+    ps.arguments = ["-p", String(pid), "-o", "ppid="]
+    ps.standardOutput = pipe
+    try? ps.run()
+    ps.waitUntilExit()
+    let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    return pid_t(out.trimmingCharacters(in: .whitespacesAndNewlines))
+}
+
 /// Signals the next waiting sibling dialog to re-activate.
 ///
 /// Uses `pgrep` to find other `claude-approve` processes and sends `SIGUSR1`
@@ -1039,6 +1125,290 @@ private func notifyNextSiblingDialog() {
             kill(nextPid, SIGUSR1)
         }
     }
+}
+
+// MARK: - Button Handler
+
+/// Manages button press state and dialog dismissal for the permission dialog.
+///
+/// Tracks which option the user selected via `result`, prevents double-press via `pressing`,
+/// and drives both click and keyboard-shortcut code paths through `animatePress(index:)`.
+private final class ButtonHandler: NSObject {
+    let options: [PermOption]
+    /// The `resultKey` of the selected `PermOption`. Defaults to `"deny"` (safe fallback).
+    var result: String = "deny"
+    var buttons: [NSButton] = []
+    private var pressing = false
+
+    init(options: [PermOption]) {
+        self.options = options
+    }
+
+    /// Visually depresses the button at `index`, records `result`, then stops the modal.
+    ///
+    /// Uses `CATransaction` to force an immediate layer flush so the pressed state renders
+    /// reliably even on panels that were backgrounded at launch. Safe to call from both
+    /// keyboard and mouse handlers — the `pressing` guard prevents double-firing.
+    ///
+    /// - Parameter index: Zero-based index into `options` and `buttons`.
+    func animatePress(index: Int) {
+        guard !pressing, index >= 0, index < buttons.count else { return }
+        pressing = true
+        let button = buttons[index]
+        let option = options[index]
+        result = option.resultKey
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        button.layer?.backgroundColor = option.color.withAlphaComponent(Theme.buttonPressAlpha).cgColor
+        CATransaction.commit()
+        CATransaction.flush()
+        button.display()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) {
+            NSApp.stopModal()
+        }
+    }
+
+    /// Button click target — delegates to `animatePress(index:)` via the button's tag.
+    @objc func clicked(_ sender: NSButton) { animatePress(index: sender.tag) }
+}
+
+// MARK: - Dialog Helpers
+
+/// Creates and positions the floating `NSPanel` for the permission dialog.
+///
+/// - Parameter height: Total panel height in points.
+/// - Returns: A configured floating `NSPanel` centered on the main screen.
+private func makePermissionPanel(height: CGFloat) -> NSPanel {
+    let panel = NSPanel(
+        contentRect: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: height),
+        styleMask: [.titled, .closable, .nonactivatingPanel],
+        backing: .buffered, defer: false
+    )
+    panel.title = "Claude Code"
+    panel.level = .floating
+    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    panel.isMovableByWindowBackground = true
+    panel.backgroundColor = Theme.background
+    panel.titleVisibility = .visible
+    panel.appearance = NSAppearance(named: .darkAqua)
+    panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+    panel.standardWindowButton(.zoomButton)?.isHidden = true
+    if let screen = NSScreen.main {
+        let frame = screen.visibleFrame
+        panel.setFrameOrigin(NSPoint(x: frame.midX - Layout.panelWidth / 2,
+                                     y: frame.midY - height / 2))
+    } else {
+        panel.center()
+    }
+    return panel
+}
+
+/// Adds the session identity header — project name, full path, and separator — to `contentView`.
+///
+/// - Parameters:
+///   - contentView: The panel's root view.
+///   - input: Hook input supplying `projectName` and `cwd`.
+///   - panelHeight: Total panel height, used as the Y origin for top-down layout.
+/// - Returns: The Y position immediately below the separator, ready for the next row.
+private func addHeader(to contentView: NSView, input: HookInput, panelHeight: CGFloat) -> CGFloat {
+    var yPos = panelHeight - Layout.panelTopPadding
+
+    yPos -= Layout.projectHeight
+    let projectLabel = NSTextField(labelWithString: input.projectName)
+    projectLabel.font = NSFont.systemFont(ofSize: Layout.projectFontSize, weight: .bold)
+    projectLabel.textColor = Theme.textPrimary
+    projectLabel.frame = NSRect(x: Layout.panelMargin, y: yPos,
+                                width: Layout.panelWidth - Layout.panelMargin * 2,
+                                height: Layout.projectHeight)
+    projectLabel.lineBreakMode = .byTruncatingTail
+    contentView.addSubview(projectLabel)
+
+    yPos -= Layout.pathHeight
+    let pathLabel = NSTextField(labelWithString: input.cwd)
+    pathLabel.font = NSFont.systemFont(ofSize: Layout.pathFontSize, weight: .regular)
+    pathLabel.textColor = Theme.textSecondary
+    pathLabel.frame = NSRect(x: Layout.panelMargin, y: yPos,
+                             width: Layout.panelWidth - Layout.panelMargin * 2,
+                             height: Layout.pathLineHeight)
+    pathLabel.lineBreakMode = .byTruncatingMiddle
+    contentView.addSubview(pathLabel)
+
+    yPos -= Layout.sectionGap
+    let separator = NSBox(frame: NSRect(x: Layout.panelInset, y: yPos,
+                                        width: Layout.panelWidth - Layout.panelInset * 2,
+                                        height: Layout.separatorHeight))
+    separator.boxType = .separator
+    contentView.addSubview(separator)
+
+    return yPos
+}
+
+/// Adds the tool tag pill and one-line gist summary label to `contentView`.
+///
+/// - Parameters:
+///   - contentView: The panel's root view.
+///   - toolName: The tool name shown in the colored pill.
+///   - gist: The short summary displayed beside the pill.
+///   - yPos: The Y coordinate immediately below the separator.
+/// - Returns: The Y position at the bottom of the tag row.
+private func addTagAndGist(to contentView: NSView, toolName: String,
+                            gist: String, yPos: CGFloat) -> CGFloat {
+    let y = yPos - Layout.sectionGap - Layout.tagButtonHeight
+
+    let tagColor = Theme.tagColor(for: toolName)
+    let tagFont  = NSFont.systemFont(ofSize: Layout.tagFontSize, weight: .bold)
+    let tagTextW = (toolName as NSString).size(withAttributes: [.font: tagFont]).width
+    let tagWidth = tagTextW + Layout.tagTextPadding
+
+    let tagPill = NSButton(frame: NSRect(x: Layout.panelMargin, y: y,
+                                         width: tagWidth, height: Layout.tagButtonHeight))
+    tagPill.title = toolName
+    tagPill.bezelStyle = .rounded
+    tagPill.isBordered = false
+    tagPill.wantsLayer = true
+    tagPill.layer?.cornerRadius = Layout.tagCornerRadius
+    tagPill.layer?.backgroundColor = tagColor.withAlphaComponent(Theme.buttonRestAlpha).cgColor
+    tagPill.font = tagFont
+    tagPill.contentTintColor = tagColor
+    tagPill.focusRingType = .none
+    tagPill.refusesFirstResponder = true
+    contentView.addSubview(tagPill)
+
+    let gistLabel = NSTextField(labelWithString: gist)
+    gistLabel.font = NSFont.systemFont(ofSize: Layout.gistFontSize, weight: .bold)
+    gistLabel.textColor = Theme.textPrimary
+    gistLabel.sizeToFit()
+    let gistH = gistLabel.frame.height
+    gistLabel.frame = NSRect(
+        x: Layout.panelMargin + tagWidth + Layout.tagGistGap,
+        y: y + (Layout.tagButtonHeight - gistH) / 2,
+        width: Layout.panelWidth - Layout.gistTrailingPadding - tagWidth,
+        height: gistH
+    )
+    gistLabel.lineBreakMode = .byTruncatingTail
+    contentView.addSubview(gistLabel)
+
+    return y
+}
+
+/// Adds the scrollable code block to `contentView` when `content` is non-empty.
+///
+/// No-ops (returning `yPos` unchanged) when `blockHeight` is zero.
+///
+/// - Parameters:
+///   - contentView: The panel's root view.
+///   - content: The attributed string to display.
+///   - yPos: The Y coordinate at the bottom of the tag row.
+///   - blockHeight: Pre-computed height for the block (0 when there is no content).
+/// - Returns: The Y position at the bottom edge of the code block.
+private func addCodeBlock(to contentView: NSView, content: NSAttributedString,
+                           yPos: CGFloat, blockHeight: CGFloat) -> CGFloat {
+    guard blockHeight > 0 else { return yPos }
+
+    let codeBlockBottom = yPos - Layout.codeBlockGap - blockHeight
+
+    let codeContainer = NSView(frame: NSRect(
+        x: Layout.panelInset, y: codeBlockBottom,
+        width: Layout.panelWidth - Layout.panelInset * 2, height: blockHeight
+    ))
+    codeContainer.wantsLayer = true
+    codeContainer.layer?.backgroundColor = Theme.codeBackground.cgColor
+    codeContainer.layer?.cornerRadius = Layout.codeCornerRadius
+    codeContainer.layer?.borderWidth = Layout.codeBorderWidth
+    codeContainer.layer?.borderColor = Theme.border.cgColor
+    contentView.addSubview(codeContainer)
+
+    let borderInset = Layout.codeBorderWidth
+    let scrollView = NSScrollView(frame: NSRect(
+        x: borderInset, y: borderInset,
+        width: codeContainer.frame.width - borderInset * 2,
+        height: codeContainer.frame.height - borderInset * 2
+    ))
+    scrollView.hasVerticalScroller = true
+    scrollView.autohidesScrollers = true
+    scrollView.drawsBackground = false
+    scrollView.borderType = .noBorder
+
+    let textStorage = NSTextStorage(attributedString: content)
+    let layoutManager = NSLayoutManager()
+    textStorage.addLayoutManager(layoutManager)
+    let textContainer = NSTextContainer(size: NSSize(
+        width: scrollView.frame.width - Layout.codeScrollerWidth, height: .greatestFiniteMagnitude
+    ))
+    textContainer.widthTracksTextView = true
+    layoutManager.addTextContainer(textContainer)
+
+    let textView = NSTextView(
+        frame: NSRect(x: 0, y: 0, width: scrollView.frame.width, height: scrollView.frame.height),
+        textContainer: textContainer
+    )
+    textView.isEditable = false
+    textView.isSelectable = true
+    textView.drawsBackground = false
+    textView.textStorage?.setAttributedString(content)
+    layoutManager.ensureLayout(for: textContainer)
+
+    let textHeight = layoutManager.usedRect(for: textContainer).height
+    let verticalPadding = max(Layout.minVerticalPadding, (scrollView.frame.height - textHeight) / 2)
+    textView.textContainerInset = NSSize(width: Layout.codeTextInset, height: verticalPadding)
+    textView.autoresizingMask = [.width]
+    textView.frame.size.height = max(textHeight + verticalPadding * 2, scrollView.frame.height)
+
+    scrollView.documentView = textView
+    codeContainer.addSubview(scrollView)
+
+    return codeBlockBottom
+}
+
+/// Adds permission buttons in pre-computed rows to `contentView`, wired to `handler`.
+///
+/// Buttons within each row are stretched to fill the available width equally.
+/// The first option's button is registered as the panel's `defaultButtonCell`.
+/// Buttons are sorted by tag after insertion so `handler.buttons` index matches option index.
+///
+/// - Parameters:
+///   - contentView: The panel's root view.
+///   - panel: The panel, used to set `defaultButtonCell`.
+///   - options: Permission options to render as buttons.
+///   - buttonRows: Pre-computed row layout (each inner array is a list of indices into `options`).
+///   - handler: The `ButtonHandler` that receives button targets.
+///   - codeBlockBottom: Y coordinate of the code block's bottom edge; buttons are placed below.
+private func addButtonRows(to contentView: NSView, panel: NSPanel, options: [PermOption],
+                            buttonRows: [[Int]], handler: ButtonHandler, codeBlockBottom: CGFloat) {
+    let availableWidth = Layout.panelWidth - Layout.buttonMargin * 2
+    for (rowIndex, row) in buttonRows.enumerated() {
+        let rowY = codeBlockBottom - Layout.buttonTopGap - Layout.buttonHeight
+            - CGFloat(rowIndex) * (Layout.buttonHeight + Layout.buttonGap)
+        let totalGaps = Layout.buttonGap * CGFloat(max(0, row.count - 1))
+        let buttonWidth = (availableWidth - totalGaps) / CGFloat(row.count)
+
+        for (col, optionIndex) in row.enumerated() {
+            let buttonX = Layout.buttonMargin + CGFloat(col) * (buttonWidth + Layout.buttonGap)
+            let option  = options[optionIndex]
+
+            let button = NSButton(frame: NSRect(x: buttonX, y: rowY,
+                                                width: buttonWidth, height: Layout.buttonHeight))
+            button.title = option.label
+            button.alignment = .center
+            button.bezelStyle = .rounded
+            button.isBordered = false
+            button.wantsLayer = true
+            button.layer?.cornerRadius = Layout.buttonCornerRadius
+            button.layer?.backgroundColor = option.color.withAlphaComponent(Theme.buttonRestAlpha).cgColor
+            button.contentTintColor = option.color
+            button.font = Theme.buttonFont
+            button.tag = optionIndex
+            button.target = handler
+            button.action = #selector(ButtonHandler.clicked(_:))
+            contentView.addSubview(button)
+            handler.buttons.append(button)
+
+            if optionIndex == 0 {
+                panel.defaultButtonCell = button.cell as? NSButtonCell
+            }
+        }
+    }
+    handler.buttons.sort { $0.tag < $1.tag }
 }
 
 // MARK: - Dialog Construction
@@ -1068,287 +1438,67 @@ private func showPermissionDialog(
     buttonRows: [[Int]],
     optionsHeight: CGFloat
 ) -> String {
-    let hasContent = content.length > 0
-
     // Calculate code block height
-    let screenHeight = NSScreen.main?.visibleFrame.height ?? Layout.fallbackScreenHeight
+    let screenHeight     = NSScreen.main?.visibleFrame.height ?? Layout.fallbackScreenHeight
     let maxContentHeight = min(Layout.maxCodeBlockHeight, screenHeight * Layout.maxScreenFraction)
-    let naturalHeight = hasContent ? measureContentHeight(content, width: Layout.panelWidth - Layout.codeContentInset) : 0
-    let codeBlockHeight = hasContent ? max(Layout.minCodeBlockHeight, min(naturalHeight, maxContentHeight)) : CGFloat(0)
-
-    // Total panel height
+    let naturalHeight    = content.length > 0
+        ? measureContentHeight(content, width: Layout.panelWidth - Layout.codeContentInset)
+        : 0
+    let codeBlockHeight  = content.length > 0
+        ? max(Layout.minCodeBlockHeight, min(naturalHeight, maxContentHeight))
+        : CGFloat(0)
     let panelHeight = Layout.fixedChrome + codeBlockHeight + optionsHeight
 
-    // --- Create panel ---
-    let panel = NSPanel(
-        contentRect: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: panelHeight),
-        styleMask: [.titled, .closable, .nonactivatingPanel],
-        backing: .buffered, defer: false
-    )
-    panel.title = "Claude Code"
-    panel.level = .floating
-    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-    panel.isMovableByWindowBackground = true
-    panel.backgroundColor = Theme.background
-    panel.titleVisibility = .visible
-    panel.appearance = NSAppearance(named: .darkAqua)
-    panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-    panel.standardWindowButton(.zoomButton)?.isHidden = true
-
-    // Center on screen
-    if let screen = NSScreen.main {
-        let frame = screen.visibleFrame
-        panel.setFrameOrigin(NSPoint(x: frame.midX - Layout.panelWidth / 2,
-                                     y: frame.midY - panelHeight / 2))
-    } else {
-        panel.center()
-    }
-
-    // --- Content view ---
+    // Build panel and content view
+    let panel = makePermissionPanel(height: panelHeight)
     let contentView = NSView(frame: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: panelHeight))
     contentView.wantsLayer = true
     contentView.layer?.backgroundColor = Theme.background.cgColor
     panel.contentView = contentView
 
-    var yPos = panelHeight - Layout.panelTopPadding
+    // Lay out UI sections top-down
+    let afterHeader      = addHeader(to: contentView, input: input, panelHeight: panelHeight)
+    let afterTag         = addTagAndGist(to: contentView, toolName: input.toolName,
+                                         gist: gist, yPos: afterHeader)
+    let codeBlockBottom  = addCodeBlock(to: contentView, content: content,
+                                        yPos: afterTag, blockHeight: codeBlockHeight)
 
-    // --- Header: project name ---
-    yPos -= Layout.projectHeight
-    let projectLabel = NSTextField(labelWithString: input.projectName)
-    projectLabel.font = NSFont.systemFont(ofSize: Layout.projectFontSize, weight: .bold)
-    projectLabel.textColor = Theme.textPrimary
-    projectLabel.frame = NSRect(x: Layout.panelMargin, y: yPos,
-                                width: Layout.panelWidth - Layout.panelMargin * 2,
-                                height: Layout.projectHeight)
-    projectLabel.lineBreakMode = .byTruncatingTail
-    contentView.addSubview(projectLabel)
-
-    // --- Header: full path ---
-    yPos -= Layout.pathHeight
-    let pathLabel = NSTextField(labelWithString: input.cwd)
-    pathLabel.font = NSFont.systemFont(ofSize: Layout.pathFontSize, weight: .regular)
-    pathLabel.textColor = Theme.textSecondary
-    pathLabel.frame = NSRect(x: Layout.panelMargin, y: yPos,
-                             width: Layout.panelWidth - Layout.panelMargin * 2,
-                             height: Layout.pathLineHeight)
-    pathLabel.lineBreakMode = .byTruncatingMiddle
-    contentView.addSubview(pathLabel)
-
-    // --- Separator ---
-    yPos -= Layout.sectionGap
-    let separator = NSBox(frame: NSRect(x: Layout.panelInset, y: yPos,
-                                        width: Layout.panelWidth - Layout.panelInset * 2,
-                                        height: Layout.separatorHeight))
-    separator.boxType = .separator
-    contentView.addSubview(separator)
-
-    // --- Tool tag pill + gist ---
-    yPos -= Layout.sectionGap
-    yPos -= Layout.tagButtonHeight
-    let tagColor = Theme.tagColor(for: input.toolName)
-    let tagFont = NSFont.systemFont(ofSize: Layout.tagFontSize, weight: .bold)
-    let tagTextWidth = (input.toolName as NSString).size(withAttributes: [.font: tagFont]).width
-    let tagWidth = tagTextWidth + Layout.tagTextPadding
-
-    let tagPill = NSButton(frame: NSRect(x: Layout.panelMargin, y: yPos,
-                                         width: tagWidth, height: Layout.tagButtonHeight))
-    tagPill.title = input.toolName
-    tagPill.bezelStyle = .rounded
-    tagPill.isBordered = false
-    tagPill.wantsLayer = true
-    tagPill.layer?.cornerRadius = Layout.tagCornerRadius
-    tagPill.layer?.backgroundColor = tagColor.withAlphaComponent(Theme.buttonRestAlpha).cgColor
-    tagPill.font = tagFont
-    tagPill.contentTintColor = tagColor
-    tagPill.focusRingType = .none
-    tagPill.refusesFirstResponder = true
-    contentView.addSubview(tagPill)
-
-    let gistLabel = NSTextField(labelWithString: gist)
-    gistLabel.font = NSFont.systemFont(ofSize: Layout.gistFontSize, weight: .bold)
-    gistLabel.textColor = Theme.textPrimary
-    gistLabel.sizeToFit()
-    let gistNaturalHeight = gistLabel.frame.height
-    gistLabel.frame = NSRect(
-        x: Layout.panelMargin + tagWidth + Layout.tagGistGap,
-        y: yPos + (Layout.tagButtonHeight - gistNaturalHeight) / 2,
-        width: Layout.panelWidth - Layout.gistTrailingPadding - tagWidth,
-        height: gistNaturalHeight
-    )
-    gistLabel.lineBreakMode = .byTruncatingTail
-    contentView.addSubview(gistLabel)
-
-    // --- Code block ---
-    yPos -= hasContent ? Layout.codeBlockGap : 0
-    let codeBlockBottom = yPos - codeBlockHeight
-
-    if hasContent {
-        let codeContainer = NSView(frame: NSRect(
-            x: Layout.panelInset, y: codeBlockBottom,
-            width: Layout.panelWidth - Layout.panelInset * 2, height: codeBlockHeight
-        ))
-        codeContainer.wantsLayer = true
-        codeContainer.layer?.backgroundColor = Theme.codeBackground.cgColor
-        codeContainer.layer?.cornerRadius = Layout.codeCornerRadius
-        codeContainer.layer?.borderWidth = Layout.codeBorderWidth
-        codeContainer.layer?.borderColor = Theme.border.cgColor
-        contentView.addSubview(codeContainer)
-
-        let borderInset = Layout.codeBorderWidth
-        let scrollView = NSScrollView(frame: NSRect(
-            x: borderInset, y: borderInset,
-            width: codeContainer.frame.width - borderInset * 2,
-            height: codeContainer.frame.height - borderInset * 2
-        ))
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-
-        let textStorage = NSTextStorage(attributedString: content)
-        let layoutManager = NSLayoutManager()
-        textStorage.addLayoutManager(layoutManager)
-        let textContainer = NSTextContainer(size: NSSize(
-            width: scrollView.frame.width - Layout.codeScrollerWidth, height: .greatestFiniteMagnitude
-        ))
-        textContainer.widthTracksTextView = true
-        layoutManager.addTextContainer(textContainer)
-
-        let textView = NSTextView(
-            frame: NSRect(x: 0, y: 0, width: scrollView.frame.width, height: scrollView.frame.height),
-            textContainer: textContainer
-        )
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.drawsBackground = false
-        textView.textStorage?.setAttributedString(content)
-        layoutManager.ensureLayout(for: textContainer)
-
-        let textHeight = layoutManager.usedRect(for: textContainer).height
-        let verticalPadding = max(Layout.minVerticalPadding, (scrollView.frame.height - textHeight) / 2)
-        textView.textContainerInset = NSSize(width: Layout.codeTextInset, height: verticalPadding)
-        textView.autoresizingMask = [.width]
-        textView.frame.size.height = max(textHeight + verticalPadding * 2, scrollView.frame.height)
-
-        scrollView.documentView = textView
-        codeContainer.addSubview(scrollView)
-    }
-
-    // --- Permission buttons ---
-    class ButtonHandler: NSObject {
-        var options: [PermOption]
-        var result: String = "deny"
-        var buttons: [NSButton] = []
-        private var pressing = false
-        init(options: [PermOption]) {
-            self.options = options
-        }
-        /// Visually depresses a button, then dismisses the dialog after a brief pause.
-        ///
-        /// Uses `CATransaction` to force an immediate layer flush so the pressed state
-        /// renders reliably even on panels that were backgrounded at launch.
-        func animatePress(index: Int) {
-            guard !pressing, index >= 0, index < buttons.count else { return }
-            pressing = true
-            let button = buttons[index]
-            let option = options[index]
-            result = option.resultKey
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            button.layer?.backgroundColor = option.color.withAlphaComponent(Theme.buttonPressAlpha).cgColor
-            CATransaction.commit()
-            CATransaction.flush()
-            button.display()
-            DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) {
-                NSApp.stopModal()
-            }
-        }
-        @objc func clicked(_ sender: NSButton) {
-            animatePress(index: sender.tag)
-        }
-    }
-
+    // Buttons
     let handler = ButtonHandler(options: options)
+    addButtonRows(to: contentView, panel: panel, options: options,
+                  buttonRows: buttonRows, handler: handler, codeBlockBottom: codeBlockBottom)
 
-    let availableWidth = Layout.panelWidth - Layout.buttonMargin * 2
-    for (rowIndex, row) in buttonRows.enumerated() {
-        let rowY = codeBlockBottom - Layout.buttonTopGap - Layout.buttonHeight - CGFloat(rowIndex) * (Layout.buttonHeight + Layout.buttonGap)
-        let totalGaps = Layout.buttonGap * CGFloat(max(0, row.count - 1))
-        let buttonWidth = (availableWidth - totalGaps) / CGFloat(row.count)
-
-        for (col, optionIndex) in row.enumerated() {
-            let buttonX = Layout.buttonMargin + CGFloat(col) * (buttonWidth + Layout.buttonGap)
-            let option = options[optionIndex]
-
-            let button = NSButton(frame: NSRect(x: buttonX, y: rowY, width: buttonWidth, height: Layout.buttonHeight))
-            button.title = option.label
-            button.alignment = .center
-            button.bezelStyle = .rounded
-            button.isBordered = false
-            button.wantsLayer = true
-            button.layer?.cornerRadius = Layout.buttonCornerRadius
-            button.layer?.backgroundColor = option.color.withAlphaComponent(Theme.buttonRestAlpha).cgColor
-            button.contentTintColor = option.color
-            button.font = Theme.buttonFont
-            button.tag = optionIndex
-            button.target = handler
-            button.action = #selector(ButtonHandler.clicked(_:))
-            contentView.addSubview(button)
-            handler.buttons.append(button)
-
-            if optionIndex == 0 {
-                panel.defaultButtonCell = button.cell as? NSButtonCell
-            }
-        }
-    }
-    // Sort buttons array by tag so index matches option index
-    handler.buttons.sort { $0.tag < $1.tag }
-
-    // --- Keyboard shortcuts ---
+    // Keyboard shortcuts: 1–N select options, Enter accepts, Esc rejects
     let keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
         let key = event.charactersIgnoringModifiers ?? ""
         if let num = Int(key), num >= 1, num <= options.count {
-            handler.animatePress(index: num - 1)
-            return nil
+            handler.animatePress(index: num - 1); return nil
         }
-        if key == "\r" {
-            handler.animatePress(index: 0)
-            return nil
-        }
-        if key == "\u{1b}" {
-            handler.animatePress(index: options.count - 1)
-            return nil
-        }
+        if key == "\r"     { handler.animatePress(index: 0);               return nil }
+        if key == "\u{1b}" { handler.animatePress(index: options.count - 1); return nil }
         return event
     }
 
-    // --- Timeout ---
+    // Timeout
     DispatchQueue.main.asyncAfter(deadline: .now() + Layout.dialogTimeout) {
         handler.result = "deny"
         NSApp.stopModal()
     }
 
-    // --- Re-activate on desktop/Space switch ---
+    // Re-activate on Space switch
     let spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
         forName: NSWorkspace.activeSpaceDidChangeNotification,
-        object: nil,
-        queue: .main
-    ) { _ in
-        if panel.isVisible { activatePanel(panel) }
-    }
+        object: nil, queue: .main
+    ) { _ in if panel.isVisible { activatePanel(panel) } }
 
-    // --- SIGUSR1 handler: sibling dialog dismissed, re-activate ---
+    // SIGUSR1: sibling dialog dismissed, re-activate
     signal(SIGUSR1, SIG_IGN)
     let signalSource = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
     signalSource.setEventHandler {
-        if panel.isVisible {
-            activatePanel(panel)
-            panel.display()
-        }
+        if panel.isVisible { activatePanel(panel); panel.display() }
     }
     signalSource.resume()
 
-    // --- Show dialog ---
     defer {
         panel.orderOut(nil)
         NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
@@ -1402,6 +1552,10 @@ private func processResult(resultKey: String, input: HookInput) -> (decision: St
     case "dont_ask_tool":
         saveToLocalSettings(input: input, rule: input.toolName)
         return ("allow", "Allowed \(input.toolName) for project")
+
+    case "allow_goto_terminal":
+        openTerminalApp()
+        return ("allow", "Allowed — terminal activated for user input")
 
     default:
         return ("deny", "Rejected via dialog")

@@ -10,10 +10,11 @@ that runs as a PreToolUse hook.
 
 ```bash
 cd hooks && swiftc -framework AppKit -o claude-approve claude-approve.swift
+cd hooks && swiftc -framework AppKit -o claude-stop    claude-stop.swift
 ```
 
-Always recompile after editing the Swift source. The binary must be at
-`hooks/claude-approve` for the hook to work.
+Always recompile after editing Swift source. Binaries must be at
+`hooks/claude-approve` and `hooks/claude-stop` for the hooks to work.
 
 ## Architecture Rules
 
@@ -106,6 +107,13 @@ Reset session approvals first: `rm -rf /tmp/claude-hook-sessions/`
 9. **Large content** — edit a file with many lines changed or run a long command.
    Dialog handles it without hanging (diff capped at 500 lines).
 10. **Keyboard shortcuts** — `1`/`2`/`3` select buttons, `Enter` accepts, `Esc` rejects.
+11. **Stop dialog** — finish any Claude task (Q&A, agentic run, plan). The "Done"
+    panel appears with a green pill, gist from the last message, and a scrollable
+    content block. Auto-dismisses in 15 seconds; `Enter`/`Esc`/`1` dismiss early.
+12. **AskUserQuestion dialog** — trigger `AskUserQuestion` (e.g., ask Claude to
+    choose an approach). Purple-tagged dialog shows the question header, question
+    text, and numbered options. "Go to Terminal" (1/Enter) activates the terminal
+    and returns allow. "Skip Question" (2/Esc) denies.
 
 ## Releases
 
