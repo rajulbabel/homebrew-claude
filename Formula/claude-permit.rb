@@ -27,7 +27,7 @@ class ClaudePermit < Formula
     (app/"MacOS/setup").write <<~SH
       #!/bin/bash
       /usr/bin/python3 "#{prefix}/install.py"
-      touch "/tmp/claude-permit-setup-done"
+      touch "/tmp/claude-permit-sentinel"
     SH
     (app/"MacOS/setup").chmod 0755
 
@@ -51,7 +51,7 @@ class ClaudePermit < Formula
   end
 
   def post_install
-    sentinel = "/tmp/claude-permit-setup-done"
+    sentinel = "/tmp/claude-permit-sentinel"
     File.delete(sentinel) if File.exist?(sentinel)
 
     system "open", "#{prefix}/SetupHelper.app"
