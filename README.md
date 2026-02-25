@@ -1,4 +1,4 @@
-# .claude
+# Claude Notifier
 
 Native macOS permission dialog for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Never miss a permission prompt again — even across multiple sessions and Spaces.
 

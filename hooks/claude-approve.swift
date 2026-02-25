@@ -1040,6 +1040,10 @@ private func measureContentHeight(_ content: NSAttributedString, width: CGFloat)
 
 // MARK: - Focus Management
 
+/// The frontmost application at hook launch time, captured before any UI activation.
+/// Set once in the main entry point. Used by `openTerminalApp()`.
+private var capturedTerminalApp: NSRunningApplication?
+
 /// Activates the application and brings the panel to front with keyboard focus.
 ///
 /// - Parameter panel: The `NSPanel` to make key and bring to front.
@@ -1048,58 +1052,416 @@ private func activatePanel(_ panel: NSPanel) {
     panel.makeKeyAndOrderFront(nil)
 }
 
-/// Finds and activates the terminal application that spawned this Claude session.
+/// Resolves the terminal TTY and parent GUI application in a single pass.
 ///
-/// Walks up the process parent chain (up to 15 levels) looking for a running
-/// application whose bundle identifier matches a known terminal emulator. Activating
-/// by exact PID ensures the correct terminal window comes forward even when multiple
-/// terminal types or multiple windows of the same type are open simultaneously.
-/// Falls back to `TERM_PROGRAM` environment variable detection if the walk fails.
-private func openTerminalApp() {
-    let knownTerminals: Set<String> = [
-        "com.apple.Terminal",
-        "com.googlecode.iterm2",
-        "dev.warp.Warp-Stable",
-        "com.microsoft.VSCode",
-        "com.jetbrains.webstorm",
-        "com.jetbrains.rider",
-        "com.jetbrains.idea",
-    ]
-    var pid = ProcessInfo.processInfo.processIdentifier
-    for _ in 0..<15 {
-        guard let ppid = parentProcessID(of: pid), ppid > 1 else { break }
-        pid = ppid
-        if let app = NSRunningApplication(processIdentifier: pid),
-           let bundleId = app.bundleIdentifier,
-           knownTerminals.contains(bundleId) {
-            app.activate()
-            return
-        }
-    }
-    // Fallback: TERM_PROGRAM env var
-    let bundleId: String
-    switch ProcessInfo.processInfo.environment["TERM_PROGRAM"] ?? "" {
-    case "iTerm.app":    bundleId = "com.googlecode.iterm2"
-    case "WarpTerminal": bundleId = "dev.warp.Warp-Stable"
-    case "vscode":       bundleId = "com.microsoft.VSCode"
-    default:             bundleId = "com.apple.Terminal"
-    }
-    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
-        NSWorkspace.shared.open(url)
-    }
-}
-
-/// Returns the parent process ID of `pid` by invoking `/bin/ps`.
-private func parentProcessID(of pid: pid_t) -> pid_t? {
+/// Snapshots the full process table with one `ps` call, then walks from the hook
+/// process upward through ancestors. This replaces separate tree-walks for TTY
+/// lookup and parent-app discovery, reducing subprocess spawns from O(N) to O(1).
+///
+/// - Returns: The owning TTY (e.g. `"s015"`) and the first GUI ancestor, either
+///   of which may be `nil`.
+private func resolveProcessAncestry() -> (tty: String?, app: NSRunningApplication?) {
     let pipe = Pipe()
     let ps = Process()
     ps.executableURL = URL(fileURLWithPath: "/bin/ps")
-    ps.arguments = ["-p", String(pid), "-o", "ppid="]
+    ps.arguments = ["-eo", "pid=,ppid=,tty="]
     ps.standardOutput = pipe
     try? ps.run()
     ps.waitUntilExit()
-    let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-    return pid_t(out.trimmingCharacters(in: .whitespacesAndNewlines))
+    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+
+    var ppidMap: [pid_t: pid_t] = [:]
+    var ttyMap: [pid_t: String] = [:]
+    for line in output.components(separatedBy: "\n") {
+        let fields = line.trimmingCharacters(in: .whitespaces)
+            .split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        guard fields.count >= 2,
+              let pid = pid_t(fields[0]),
+              let ppid = pid_t(fields[1]) else { continue }
+        ppidMap[pid] = ppid
+        if fields.count > 2 {
+            let tty = String(fields[2]).trimmingCharacters(in: .whitespaces)
+            if !tty.isEmpty && tty != "??" { ttyMap[pid] = tty }
+        }
+    }
+
+    var foundTTY: String? = nil
+    var foundApp: NSRunningApplication? = nil
+    var pid = ProcessInfo.processInfo.processIdentifier
+    if let t = ttyMap[pid] { foundTTY = t }
+
+    for _ in 0..<15 {
+        guard let ppid = ppidMap[pid], ppid > 1 else { break }
+        pid = ppid
+        if foundTTY == nil, let t = ttyMap[pid] { foundTTY = t }
+        if foundApp == nil,
+           let app = NSRunningApplication(processIdentifier: pid),
+           app.activationPolicy == .regular {
+            foundApp = app
+        }
+        if foundTTY != nil && foundApp != nil { break }
+    }
+
+    return (foundTTY, foundApp)
+}
+
+/// Executes an AppleScript source string, ignoring errors.
+private func runAppleScript(_ source: String) {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    p.arguments = ["-e", source]
+    try? p.run()
+    p.waitUntilExit()
+}
+
+/// Focuses the Terminal.app tab whose TTY matches `tty`.
+///
+/// Terminal.app reports tab TTYs as `ttysXXX`; `ps -o tty=` returns just `sXXX`,
+/// so we match by suffix to handle both formats.
+private func focusTerminalTab(tty: String) {
+    runAppleScript("""
+    tell application "Terminal"
+        repeat with w in windows
+            repeat with t in tabs of w
+                if (tty of t) ends with "\(tty)" then
+                    set selected tab of w to t
+                    set frontmost of w to true
+                    return
+                end if
+            end repeat
+        end repeat
+    end tell
+    """)
+}
+
+/// Focuses the iTerm2 session whose TTY matches `tty` and activates the app.
+///
+/// iTerm2 reports session TTYs as `/dev/ttysXXX`; we match by suffix.
+/// Activation is done inside the same AppleScript to avoid the `reopen`
+/// command in `openApp()` resetting the selected tab.
+private func focusiTermSession(tty: String) {
+    runAppleScript("""
+    tell application "iTerm2"
+        repeat with w in windows
+            repeat with t in tabs of w
+                repeat with s in sessions of t
+                    if (tty of s) ends with "\(tty)" then
+                        select t
+                        select s
+                        set index of w to 1
+                        activate
+                        return
+                    end if
+                end repeat
+            end repeat
+        end repeat
+        activate
+    end tell
+    """)
+}
+
+/// Finds and raises the window whose title contains `substring` (case-insensitive)
+/// using the Accessibility API.
+///
+/// This is the generic strategy for terminals and IDEs that lack AppleScript tab
+/// control (Warp, VS Code, JetBrains, etc.). Most of these apps include the
+/// project directory or file name in the window title.
+///
+/// - Parameters:
+///   - app: The running application to search.
+///   - substring: The case-insensitive substring to match against window titles.
+/// - Returns: `true` if a matching window was found and raised; `false` otherwise.
+@discardableResult
+private func focusAXWindowByTitle(app: NSRunningApplication, substring: String) -> Bool {
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    var windowsRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+          let windows = windowsRef as? [AXUIElement] else {
+        return false
+    }
+    let needle = substring.lowercased()
+    for window in windows {
+        var titleRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef) == .success,
+           let title = titleRef as? String, title.lowercased().contains(needle) {
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+            AXUIElementSetAttributeValue(axApp, kAXFrontmostAttribute as CFString, true as CFTypeRef)
+            return true
+        }
+    }
+    return false
+}
+
+/// Checks whether the current Warp tab's text area contains `needle`.
+private func warpTabContains(_ needle: String) -> Bool {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    p.arguments = ["-e", """
+    tell application "System Events"
+        tell process "Warp"
+            if value of text area 1 of window 1 contains "\(needle)" then
+                return "yes"
+            end if
+        end tell
+    end tell
+    return "no"
+    """]
+    let pipe = Pipe()
+    p.standardOutput = pipe
+    p.standardError = Pipe()
+    try? p.run()
+    p.waitUntilExit()
+    let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return out == "yes"
+}
+
+/// Focuses the Warp tab that owns our TTY and activates Warp.
+///
+/// Writes a unique plain-text marker to the TTY device, checks if the
+/// current tab already has it (no activation needed for the check), and
+/// if not, activates Warp and cycles tabs in a single AppleScript loop.
+///
+/// - Parameters:
+///   - bundleId: Warp's bundle identifier.
+///   - tty: The TTY string (e.g. `"s015"`).
+/// - Returns: `true` if the target tab was found and activated.
+private func focusWarpTab(bundleId: String, tty: String?) -> Bool {
+    guard let tty = tty else { return false }
+
+    let marker = "claude-hook-\(ProcessInfo.processInfo.processIdentifier)"
+
+    // Write marker to our TTY so we can identify the correct tab.
+    let ttyPath = tty.hasPrefix("/dev/") ? tty
+        : tty.hasPrefix("tty") ? "/dev/\(tty)"
+        : "/dev/tty\(tty)"
+    guard let data = marker.data(using: .utf8),
+          let handle = FileHandle(forWritingAtPath: ttyPath) else {
+        return false
+    }
+    handle.write(data)
+    handle.closeFile()
+    Thread.sleep(forTimeInterval: 0.2)
+
+    // Fast path: if the current tab already has our marker, just activate.
+    if warpTabContains(marker) {
+        runAppleScript("""
+        tell application id "\(bundleId)"
+            activate
+        end tell
+        """)
+        return true
+    }
+
+    // Cycle tabs in a single AppleScript to find ours.
+    let cycleProc = Process()
+    cycleProc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+    cycleProc.arguments = ["-e", """
+    try
+        tell application id "\(bundleId)" to activate
+        delay 0.2
+        tell application "System Events"
+            tell process "Warp"
+                set startTitle to ""
+                try
+                    set startTitle to name of window 1
+                end try
+                repeat 20 times
+                    keystroke "]" using {command down, shift down}
+                    delay 0.1
+                    try
+                        if value of text area 1 of window 1 contains "\(marker)" then
+                            return "found"
+                        end if
+                    end try
+                    try
+                        if startTitle is not "" then
+                            set currentTitle to name of window 1
+                            if currentTitle = startTitle then
+                                return "wrapped"
+                            end if
+                        end if
+                    end try
+                end repeat
+            end tell
+        end tell
+        return "exhausted"
+    on error errMsg
+        return "error:" & errMsg
+    end try
+    """]
+    let cyclePipe = Pipe()
+    cycleProc.standardOutput = cyclePipe
+    cycleProc.standardError = Pipe()
+    try? cycleProc.run()
+    cycleProc.waitUntilExit()
+    let result = String(data: cyclePipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return result == "found"
+}
+
+/// Recursively searches the Accessibility tree for a clickable element whose
+/// title or value contains `substring` (case-insensitive) and presses it.
+///
+/// Used by JetBrains IDEs to activate the Terminal tool window. Only matches
+/// elements whose role is in
+/// `roles` — typically buttons, radio buttons, tabs, or cells.
+///
+/// - Parameters:
+///   - app: The running application whose AX tree to search.
+///   - substring: Case-insensitive text to match against element titles/values.
+///   - roles: Set of AX role strings that are eligible for pressing.
+///   - maxDepth: Maximum recursion depth (default 8) to avoid runaway traversal.
+/// - Returns: `true` if a matching element was found and pressed.
+@discardableResult
+private func focusAXDescendant(app: NSRunningApplication, matching substring: String, roles: Set<String>, maxDepth: Int = 8) -> Bool {
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    let needle = substring.lowercased()
+    return searchAXTree(element: axApp, needle: needle, roles: roles, depth: 0, maxDepth: maxDepth)
+}
+
+/// Recursive helper for `focusAXDescendant`. Walks the AX element tree
+/// depth-first, checking title and value attributes at each node.
+private func searchAXTree(element: AXUIElement, needle: String, roles: Set<String>, depth: Int, maxDepth: Int) -> Bool {
+    if depth > maxDepth { return false }
+
+    var roleRef: CFTypeRef?
+    let role: String? = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef) == .success
+        ? (roleRef as? String) : nil
+
+    // Check title attribute.
+    var titleRef: CFTypeRef?
+    if AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &titleRef) == .success,
+       let title = titleRef as? String, !title.isEmpty,
+       title.lowercased().contains(needle),
+       let r = role, roles.contains(r) {
+        AXUIElementPerformAction(element, kAXPressAction as CFString)
+        return true
+    }
+
+    // Check value attribute (some apps store tab titles in AXValue).
+    var valueRef: CFTypeRef?
+    if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef) == .success,
+       let value = valueRef as? String, !value.isEmpty,
+       value.lowercased().contains(needle),
+       let r = role, roles.contains(r) {
+        AXUIElementPerformAction(element, kAXPressAction as CFString)
+        return true
+    }
+
+    // Recurse into children.
+    var childrenRef: CFTypeRef?
+    if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+       let children = childrenRef as? [AXUIElement] {
+        for child in children {
+            if searchAXTree(element: child, needle: needle, roles: roles, depth: depth + 1, maxDepth: maxDepth) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+/// Transfers activation from this hook to the target running application.
+///
+/// Uses two complementary strategies:
+/// 1. **AX raise** — window-level focus via Accessibility.
+/// 2. **AppleScript `reopen` + `activate`** — reliably brings apps to front
+///    even across Spaces by simulating a Dock-icon click.
+private func openApp(_ app: NSRunningApplication) {
+    guard let bundleId = app.bundleIdentifier else { return }
+
+    // AX raise — best-effort window-level focus.
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    var windowsRef: CFTypeRef?
+    if AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+       let windows = windowsRef as? [AXUIElement], !windows.isEmpty {
+        for window in windows {
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        }
+        AXUIElementSetAttributeValue(axApp, kAXFrontmostAttribute as CFString, true as CFTypeRef)
+    }
+
+    // AppleScript reopen + activate — triggers the Dock-click handler.
+    runAppleScript("""
+    tell application id "\(bundleId)"
+        reopen
+        activate
+    end tell
+    """)
+}
+
+/// Activates the terminal or IDE that spawned this Claude session.
+///
+/// Uses `resolveProcessAncestry()` to find the parent terminal/IDE in a single
+/// `ps` call, falling back to the frontmost app captured at launch. Each
+/// terminal family gets a dedicated strategy:
+///
+/// - **Terminal.app**: AppleScript tab selection by TTY.
+/// - **iTerm2**: AppleScript session selection by TTY with inline activation.
+/// - **Warp**: TTY marker + tab cycling via Cmd+Shift+].
+/// - **JetBrains IDEs**: AX window-title match + AX deep search for Terminal tool.
+/// - **Other** (VS Code, Kitty, etc.): AX window-title match, standard activation.
+///
+/// - Parameter cwd: The current working directory, used to extract the project
+///   name for window-title matching.
+private func openTerminalApp(cwd: String) {
+    let (tty, parentApp) = resolveProcessAncestry()
+    guard let app = parentApp ?? capturedTerminalApp else { return }
+
+    let projectName = (cwd as NSString).lastPathComponent
+    let bundleId = app.bundleIdentifier ?? ""
+
+    switch bundleId {
+    case "com.apple.Terminal":
+        if let t = tty { focusTerminalTab(tty: t) }
+        openApp(app)
+
+    case "com.googlecode.iterm2":
+        // iTerm2: AppleScript handles both tab selection and activation in one
+        // call to avoid `reopen` in openApp() resetting the selected tab.
+        if let t = tty {
+            focusiTermSession(tty: t)
+        } else {
+            openApp(app)
+        }
+
+    case _ where bundleId.hasPrefix("dev.warp."):
+        // Warp exposes 0 AX windows and has no AppleScript tab API.
+        // `reopen` and NSWorkspace.open both create new tabs.
+        if !focusWarpTab(bundleId: bundleId, tty: tty) {
+            runAppleScript("""
+            tell application id "\(bundleId)"
+                activate
+            end tell
+            """)
+        }
+
+    case _ where bundleId.hasPrefix("com.jetbrains."):
+        // JetBrains IDEs: focus the window matching the project name, then
+        // activate the Terminal tool window via AX deep search.
+        focusAXWindowByTitle(app: app, substring: projectName)
+        openApp(app)
+        Thread.sleep(forTimeInterval: 0.15)
+        let toolRoles: Set<String> = ["AXButton", "AXRadioButton", "AXTab", "AXCheckBox", "AXStaticText"]
+        focusAXDescendant(app: app, matching: "Terminal", roles: toolRoles)
+
+    default:
+        // VS Code, Kitty, and other terminals.
+        if !focusAXWindowByTitle(app: app, substring: projectName) {
+            openApp(app)
+        }
+        let cwdURL = URL(fileURLWithPath: cwd)
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            let sem = DispatchSemaphore(value: 0)
+            NSWorkspace.shared.open([cwdURL], withApplicationAt: appURL, configuration: config) { _, _ in
+                sem.signal()
+            }
+            _ = sem.wait(timeout: .now() + 3)
+        }
+    }
 }
 
 /// Signals the next waiting sibling dialog to re-activate.
@@ -1554,7 +1916,7 @@ private func processResult(resultKey: String, input: HookInput) -> (decision: St
         return ("allow", "Allowed \(input.toolName) for project")
 
     case "allow_goto_terminal":
-        openTerminalApp()
+        openTerminalApp(cwd: input.cwd)
         return ("allow", "Allowed — terminal activated for user input")
 
     default:
@@ -1582,6 +1944,9 @@ if checkAlwaysApprove(input: input) {
 if checkSessionAutoApprove(input: input) {
     exit(0)
 }
+
+// Capture terminal/IDE before activating our own UI
+capturedTerminalApp = NSWorkspace.shared.frontmostApplication
 
 // Initialize headless NSApplication (no Dock icon)
 let app = NSApplication.shared
