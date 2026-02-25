@@ -899,6 +899,61 @@ func testSaveToLocalSettings() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MARK: - sessionFilePath Sanitization Tests (5)
+// ═══════════════════════════════════════════════════════════════════
+
+func testSessionFilePathSanitization() {
+    test("sessionFilePath: normal ID unchanged") {
+        let i = makeInput(session: "abc-123_test.session")
+        assertContains(i.sessionFilePath ?? "", "abc-123_test.session")
+    }
+    test("sessionFilePath: path traversal sanitized") {
+        let i = makeInput(session: "../../etc/passwd")
+        let path = i.sessionFilePath ?? ""
+        // Slashes must be stripped — the file should be directly in sessionDirectory
+        let dir = (path as NSString).deletingLastPathComponent
+        assertEq(dir, HookInput.sessionDirectory)
+        // Must not contain the original traversal target
+        assertNotContains(path, "/etc/passwd")
+    }
+    test("sessionFilePath: slashes replaced") {
+        let i = makeInput(session: "foo/bar/baz")
+        let path = i.sessionFilePath ?? ""
+        // The sanitized path should end with the sanitized ID, not create subdirs
+        let filename = (path as NSString).lastPathComponent
+        assertNotContains(filename, "/")
+    }
+    test("sessionFilePath: spaces replaced") {
+        let i = makeInput(session: "session with spaces")
+        let path = i.sessionFilePath ?? ""
+        assertNotContains(path.components(separatedBy: "/").last ?? "", " ")
+    }
+    test("sessionFilePath: empty still returns nil") {
+        let i = makeInput(session: "")
+        assertTrue(i.sessionFilePath == nil)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MARK: - Session Directory Permissions Tests (1)
+// ═══════════════════════════════════════════════════════════════════
+
+func testSessionDirectoryPermissions() {
+    test("saveSession: directory has restricted permissions") {
+        let sid = testSessionId()
+        defer { cleanupSession(sid) }
+        let i = makeInput(session: sid)
+        saveToSessionFile(input: i, entry: "TestTool")
+        let attrs = try? FileManager.default.attributesOfItem(
+            atPath: HookInput.sessionDirectory
+        )
+        let perms = (attrs?[.posixPermissions] as? Int) ?? 0
+        // Group and other should have no permissions (0o077 mask = 0)
+        assertEq(perms & 0o077, 0)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MARK: - Main Entry Point
 // ═══════════════════════════════════════════════════════════════════
 
@@ -922,6 +977,8 @@ enum ApproveTests {
         testCheckSessionAutoApprove()
         testSaveToSessionFile()
         testSaveToLocalSettings()
+        testSessionFilePathSanitization()
+        testSessionDirectoryPermissions()
 
         exit(printSummary())
     }

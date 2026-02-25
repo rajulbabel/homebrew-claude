@@ -57,9 +57,9 @@ HOOK_ENTRY = {
         }
     ],
     "matcher": (
-        "Bash|Edit|Write|Read|NotebookEdit"
+        "^(Bash|Edit|Write|Read|NotebookEdit"
         "|Task|WebFetch|WebSearch|Glob|Grep"
-        "|AskUserQuestion"
+        "|AskUserQuestion)$"
     ),
 }
 
@@ -101,26 +101,28 @@ def write_manifest(installed_files):
 
 
 def copy_hooks_local():
-    """Copy hooks from local clone to ~/.claude/hooks/."""
+    """Copy hooks from local clone to ~/.claude/hooks/.
+
+    Only copies files listed in HOOK_FILES to avoid copying development
+    artifacts (e.g. .claude/, .DS_Store) into the user's hooks directory.
+    """
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    src = os.path.realpath(os.path.join(script_dir, "hooks"))
-    dst = os.path.realpath(os.path.join(CLAUDE_DIR, "hooks"))
-    if src == dst:
-        print(f"Hooks already in place at {dst}/")
+    src_root = os.path.realpath(script_dir)
+    dst_root = os.path.realpath(CLAUDE_DIR)
+    if src_root == dst_root:
+        print(f"Hooks already in place at {dst_root}/hooks/")
         write_manifest(HOOK_FILES)
         return
-    os.makedirs(dst, exist_ok=True)
-    installed = []
-    for item in os.listdir(src):
-        s = os.path.join(src, item)
-        d = os.path.join(dst, item)
-        if os.path.isdir(s):
-            shutil.copytree(s, d, dirs_exist_ok=True)
-        else:
-            shutil.copy2(s, d)
-            installed.append(f"hooks/{item}")
-    write_manifest(installed)
-    print(f"Copied hooks to {dst}/")
+    os.makedirs(os.path.join(dst_root, "hooks"), exist_ok=True)
+    for rel_path in HOOK_FILES:
+        s = os.path.join(src_root, rel_path)
+        d = os.path.join(dst_root, rel_path)
+        if not os.path.exists(s):
+            print(f"  Warning: {rel_path} not found, skipping")
+            continue
+        shutil.copy2(s, d)
+    write_manifest(HOOK_FILES)
+    print(f"Copied hooks to {dst_root}/hooks/")
 
 
 # ─── Hooks: Remote ────────────────────────────────────────────────────
@@ -163,7 +165,7 @@ def recompile_binaries():
         print("Then recompile manually:")
         for src, dst in SWIFT_BINARIES:
             print(
-                f"  cd {hooks_dir} && swiftc"
+                f"  cd {hooks_dir} && swiftc -O -parse-as-library"
                 f" -framework AppKit -o {dst} {src}"
             )
         return False
@@ -171,7 +173,7 @@ def recompile_binaries():
     for src, dst in SWIFT_BINARIES:
         src_path = os.path.join(hooks_dir, src)
         dst_path = os.path.join(hooks_dir, dst)
-        cmd = ["swiftc", "-O", "-framework", "AppKit", "-o", dst_path, src_path]
+        cmd = ["swiftc", "-O", "-parse-as-library", "-framework", "AppKit", "-o", dst_path, src_path]
         print(f"  {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -182,6 +184,15 @@ def recompile_binaries():
 
 
 # ─── Settings ─────────────────────────────────────────────────────────
+
+
+def _atomic_write_json(path, data):
+    """Write JSON to path atomically via a temp file + os.replace."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
 
 
 def remove_our_hooks(hooks):
@@ -228,9 +239,7 @@ def merge_hook_config():
     print(f"Writing Stop hook config to {SETTINGS}")
     hooks.setdefault("Stop", []).append(STOP_HOOK_ENTRY)
 
-    with open(SETTINGS, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=2)
-        f.write("\n")
+    _atomic_write_json(SETTINGS, settings)
 
 
 # ─── Uninstall ────────────────────────────────────────────────────────
@@ -276,9 +285,7 @@ def uninstall_hooks():
 
         hooks = settings.setdefault("hooks", {})
         remove_our_hooks(hooks)
-        with open(SETTINGS, "w", encoding="utf-8") as f:
-            json.dump(settings, f, indent=2)
-            f.write("\n")
+        _atomic_write_json(SETTINGS, settings)
         print(f"Removed hook entries from {SETTINGS}")
 
     print("\nDone! Restart Claude Code for changes to take effect.")

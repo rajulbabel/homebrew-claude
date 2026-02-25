@@ -22,7 +22,7 @@
 //
 //  ## Build
 //  ```
-//  swiftc -framework AppKit -o claude-approve claude-approve.swift
+//  swiftc -O -parse-as-library -framework AppKit -o claude-approve claude-approve.swift
 //  ```
 //
 
@@ -48,8 +48,17 @@ struct HookInput {
     var projectName: String { (cwd as NSString).lastPathComponent }
 
     /// Path to the session auto-approve file, or `nil` if `sessionId` is empty.
+    ///
+    /// Sanitizes the session ID to prevent path traversal — only ASCII
+    /// alphanumerics, dots, underscores, and hyphens are kept; all other
+    /// characters are replaced with underscores.
     var sessionFilePath: String? {
-        sessionId.isEmpty ? nil : "\(HookInput.sessionDirectory)/\(sessionId)"
+        guard !sessionId.isEmpty else { return nil }
+        let sanitized = String(sessionId.map { c in
+            c.isASCII && (c.isLetter || c.isNumber || c == "." || c == "_" || c == "-")
+                ? c : Character("_")
+        })
+        return "\(HookInput.sessionDirectory)/\(sanitized)"
     }
 }
 
@@ -222,7 +231,7 @@ private func parseHookInput() -> HookInput {
     let data = FileHandle.standardInput.readDataToEndOfFile()
     let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
     return HookInput(
-        toolName:  json["tool_name"]  as? String ?? "Tool",
+        toolName:  json["tool_name"]  as? String ?? "",
         toolInput: json["tool_input"] as? [String: Any] ?? [:],
         cwd:       json["cwd"]        as? String ?? "",
         sessionId: json["session_id"] as? String ?? ""
@@ -283,6 +292,9 @@ func saveToSessionFile(input: HookInput, entry: String) {
     guard let path = input.sessionFilePath else { return }
     try? FileManager.default.createDirectory(
         atPath: HookInput.sessionDirectory, withIntermediateDirectories: true
+    )
+    try? FileManager.default.setAttributes(
+        [.posixPermissions: 0o700], ofItemAtPath: HookInput.sessionDirectory
     )
     guard let data = "\(entry)\n".data(using: .utf8) else { return }
     let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
@@ -1934,6 +1946,12 @@ func processResult(resultKey: String, input: HookInput) -> (decision: String, re
 
 private func approveMain() {
     let input = parseHookInput()
+
+    // Fast path: deny immediately if stdin was empty or missing tool_name
+    if input.toolName.isEmpty {
+        writeHookResponse(decision: "deny", reason: "Invalid or missing hook input")
+        exit(0)
+    }
 
     // Fast path: skip dialog if tool is in the persistent always-approve list
     if checkAlwaysApprove(input: input) {

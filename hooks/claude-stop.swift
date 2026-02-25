@@ -14,7 +14,7 @@
 //
 //  ## Build
 //  ```
-//  swiftc -framework AppKit -o claude-stop claude-stop.swift
+//  swiftc -O -parse-as-library -framework AppKit -o claude-stop claude-stop.swift
 //  ```
 //
 
@@ -115,6 +115,9 @@ enum Layout {
     // Timing
     static let autoDismiss:           TimeInterval = 15
     static let pressAnimationDelay:   TimeInterval = 0.12
+
+    // Content limits
+    static let maxContentLines = 500
 }
 
 // MARK: - Input Parsing
@@ -264,7 +267,11 @@ func buildStopContent(_ message: String) -> NSAttributedString {
     let result               = NSMutableAttributedString()
     var inCodeFence          = false
 
-    for rawLine in message.components(separatedBy: "\n") {
+    let allLines = message.components(separatedBy: "\n")
+    let capped   = allLines.count > Layout.maxContentLines
+    let lines    = capped ? Array(allLines.prefix(Layout.maxContentLines)) : allLines
+
+    for rawLine in lines {
         let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
 
         // Toggle code fence mode; render fence line in mono
@@ -314,6 +321,15 @@ func buildStopContent(_ message: String) -> NSAttributedString {
         let line = NSMutableAttributedString(attributedString: rendered)
         line.append(NSAttributedString(string: "\n"))
         result.append(line)
+    }
+
+    // Append truncation notice if content was capped
+    if capped {
+        let remaining = allLines.count - Layout.maxContentLines
+        result.append(NSAttributedString(
+            string: "\n... (\(remaining) more lines truncated)\n",
+            attributes: [.font: baseFont, .foregroundColor: Theme.textSecondary]
+        ))
     }
 
     // Strip trailing newlines

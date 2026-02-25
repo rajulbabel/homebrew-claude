@@ -262,6 +262,32 @@ func testThemeAndLayout() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MARK: - Content Cap Tests (3)
+// ═══════════════════════════════════════════════════════════════════
+
+func testStopContentCap() {
+    test("stopContent: very long message is capped") {
+        let longMessage = (0..<2000).map { "This is line number \($0)" }
+            .joined(separator: "\n")
+        let content = buildStopContent(longMessage)
+        let lineCount = content.string.components(separatedBy: "\n").count
+        // Should be capped well below 2000 lines
+        assertTrue(lineCount <= 600, "content should be capped (got \(lineCount) lines)")
+    }
+    test("stopContent: capped content shows truncation notice") {
+        let longMessage = (0..<2000).map { "Line \($0)" }
+            .joined(separator: "\n")
+        let content = buildStopContent(longMessage)
+        assertContains(content.string, "truncated")
+    }
+    test("stopContent: short message not capped") {
+        let shortMessage = "Just a few lines\nof content\nhere"
+        let content = buildStopContent(shortMessage)
+        assertNotContains(content.string, "truncated")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MARK: - Main Entry Point
 // ═══════════════════════════════════════════════════════════════════
 
@@ -275,6 +301,7 @@ enum StopTests {
         testMeasureStopContentHeight()
         testItalicVariant()
         testThemeAndLayout()
+        testStopContentCap()
 
         exit(printSummary())
     }
