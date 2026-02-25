@@ -1,8 +1,8 @@
 class Permit < Formula
   desc "Native macOS permission dialog for Claude Code"
   homepage "https://github.com/rajulbabel/homebrew-claude"
-  url "https://github.com/rajulbabel/homebrew-claude.git", tag: "v1.1.2"
-  version "1.1.2"
+  url "https://github.com/rajulbabel/homebrew-claude.git", tag: "v1.2.0"
+  version "1.2.0"
   license "MIT"
 
   depends_on :macos
