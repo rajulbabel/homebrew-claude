@@ -1,4 +1,3 @@
-#!/usr/bin/env swift
 //
 //  claude-stop.swift
 //  Claude Code Hook — Stop Notification Dialog
@@ -37,7 +36,7 @@ struct StopInput {
 // MARK: - Theme
 
 /// Visual theme constants — mirrors the dark palette used in claude-approve.
-private enum Theme {
+enum Theme {
     // Backgrounds
     static let background     = NSColor(calibratedRed: 0.10, green: 0.10, blue: 0.12, alpha: 1)
     static let codeBackground = NSColor(calibratedRed: 0.07, green: 0.07, blue: 0.09, alpha: 1)
@@ -63,7 +62,7 @@ private enum Theme {
 // MARK: - Layout
 
 /// Dimension and timing constants for the Stop dialog panel.
-private enum Layout {
+enum Layout {
     // Panel
     static let panelWidth:        CGFloat = 580
     static let panelMargin:       CGFloat = 16
@@ -143,7 +142,7 @@ private func parseStopInput() -> StopInput {
 ///
 /// - Parameter text: A single line potentially containing Markdown.
 /// - Returns: The line with block-level syntax removed.
-private func stripBlockMarkdown(_ text: String) -> String {
+func stripBlockMarkdown(_ text: String) -> String {
     var s = text
     s = s.replacingOccurrences(of: #"^#{1,6}\s+"#,  with: "", options: [.regularExpression, .anchored])
     s = s.replacingOccurrences(of: #"^[-*+]\s+"#,   with: "", options: [.regularExpression, .anchored])
@@ -154,7 +153,7 @@ private func stripBlockMarkdown(_ text: String) -> String {
 }
 
 /// Returns an italic variant of `font` using font descriptor symbolic traits.
-private func italicVariant(of font: NSFont) -> NSFont {
+func italicVariant(of font: NSFont) -> NSFont {
     let descriptor = font.fontDescriptor.withSymbolicTraits(.italic)
     return NSFont(descriptor: descriptor, size: font.pointSize) ?? font
 }
@@ -170,7 +169,7 @@ private func italicVariant(of font: NSFont) -> NSFont {
 ///   - font:  Base font (used for plain text and as size reference).
 ///   - color: Foreground color applied to all spans.
 /// - Returns: An `NSAttributedString` with appropriate bold/italic/mono attributes.
-private func renderMarkdownInline(_ text: String, font: NSFont, color: NSColor) -> NSAttributedString {
+func renderMarkdownInline(_ text: String, font: NSFont, color: NSColor) -> NSAttributedString {
     let size   = font.pointSize
     let bold   = NSFont.systemFont(ofSize: size, weight: .bold)
     let italic = italicVariant(of: NSFont.systemFont(ofSize: size))
@@ -227,7 +226,7 @@ private func renderMarkdownInline(_ text: String, font: NSFont, color: NSColor) 
 ///
 /// - Parameter message: The full `last_assistant_message` string.
 /// - Returns: A short string (may still contain inline Markdown) for the Done pill gist.
-private func buildStopGist(_ message: String) -> String {
+func buildStopGist(_ message: String) -> String {
     let firstLine = message
         .components(separatedBy: "\n")
         .first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) ?? ""
@@ -256,7 +255,7 @@ private func buildStopGist(_ message: String) -> String {
 ///
 /// - Parameter message: The raw `last_assistant_message` text.
 /// - Returns: An `NSAttributedString` with formatting applied, trailing newlines stripped.
-private func buildStopContent(_ message: String) -> NSAttributedString {
+func buildStopContent(_ message: String) -> NSAttributedString {
     let baseSize:    CGFloat = 14
     let baseFont             = NSFont.systemFont(ofSize: baseSize)
     let monoFont             = NSFont.monospacedSystemFont(ofSize: baseSize - 1, weight: .regular)
@@ -333,7 +332,7 @@ private func buildStopContent(_ message: String) -> NSAttributedString {
 ///   - content: The attributed string to measure.
 ///   - width: Available horizontal space in points.
 /// - Returns: Required height in points, including vertical padding.
-private func measureStopContentHeight(_ content: NSAttributedString, width: CGFloat) -> CGFloat {
+func measureStopContentHeight(_ content: NSAttributedString, width: CGFloat) -> CGFloat {
     let storage   = NSTextStorage(attributedString: content)
     let layout    = NSLayoutManager()
     storage.addLayoutManager(layout)
@@ -1139,17 +1138,28 @@ private func showStopDialog(input: StopInput) {
 /// 3. Initialize headless NSApplication and show the Done dialog
 /// 4. Exit 0 — Claude continues normally (no stdout output)
 
-let stopInput = parseStopInput()
+private func stopMain() {
+    let stopInput = parseStopInput()
 
-// Safety guard: if a Stop hook fired this process, don't loop infinitely
-if stopInput.stopHookActive { exit(0) }
+    // Safety guard: if a Stop hook fired this process, don't loop infinitely
+    if stopInput.stopHookActive { exit(0) }
 
-// Capture terminal/IDE before activating our own UI
-capturedTerminalApp = NSWorkspace.shared.frontmostApplication
+    // Capture terminal/IDE before activating our own UI
+    capturedTerminalApp = NSWorkspace.shared.frontmostApplication
 
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
-NSSound(named: "Blow")?.play()
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    NSSound(named: "Blow")?.play()
 
-showStopDialog(input: stopInput)
-exit(0)
+    showStopDialog(input: stopInput)
+    exit(0)
+}
+
+#if !TESTING
+@main
+enum StopEntry {
+    static func main() {
+        stopMain()
+    }
+}
+#endif

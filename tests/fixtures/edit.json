@@ -1,0 +1,1 @@
+{"tool_name":"Edit","tool_input":{"file_path":"/tmp/test-project/main.swift","old_string":"let x = 1","new_string":"let x = 2"},"cwd":"/tmp/test-project","session_id":""}

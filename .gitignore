@@ -33,3 +33,7 @@ hooks/claude-dialog
 hooks/claude-dialog.swift
 hooks/claude-watcher
 hooks/claude-watcher.swift
+
+# Test binaries (compiled from tests/)
+tests/test-approve-bin
+tests/test-stop-bin

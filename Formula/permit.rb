@@ -9,10 +9,10 @@ class Permit < Formula
 
   def install
     cd "hooks" do
-      system "swiftc", "-O", "-framework", "AppKit",
+      system "swiftc", "-O", "-parse-as-library", "-framework", "AppKit",
              "-o", "claude-approve",
              "claude-approve.swift"
-      system "swiftc", "-O", "-framework", "AppKit",
+      system "swiftc", "-O", "-parse-as-library", "-framework", "AppKit",
              "-o", "claude-stop",
              "claude-stop.swift"
     end

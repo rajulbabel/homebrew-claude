@@ -9,8 +9,8 @@ that runs as a PreToolUse hook.
 ## Build
 
 ```bash
-cd hooks && swiftc -O -framework AppKit -o claude-approve claude-approve.swift
-cd hooks && swiftc -O -framework AppKit -o claude-stop    claude-stop.swift
+cd hooks && swiftc -O -parse-as-library -framework AppKit -o claude-approve claude-approve.swift
+cd hooks && swiftc -O -parse-as-library -framework AppKit -o claude-stop    claude-stop.swift
 ```
 
 Always recompile after editing Swift source. Binaries must be at
@@ -84,10 +84,30 @@ between sections.
 
 ## Testing
 
+### Automated Tests
+
+Run the full test suite (unit + integration) with:
+
+```bash
+bash tests/run.sh
+```
+
+Test builds use conditional compilation (`-D TESTING`) so the test harness can call
+internal functions directly. The test binaries compile the source + test files together:
+
+```bash
+# Test build (source + test files compiled together):
+swiftc -D TESTING -parse-as-library -framework AppKit \
+  hooks/claude-approve.swift tests/harness.swift tests/test-approve.swift \
+  -o tests/test-approve-bin
+```
+
+Tests live in `tests/` which is invisible to users (`install.py` only copies from `hooks/`).
+
+### Manual Test Cases
+
 After any change to `claude-approve.swift`, recompile and run through all test cases.
 Reset session approvals first: `rm -rf /tmp/claude-hook-sessions/`
-
-### Test Cases
 
 1. **Consecutive Bash dialogs (5+)** — fire 5+ parallel `echo` commands. Dialogs appear
    one at a time, next gets focus automatically after dismissal, no flickering.

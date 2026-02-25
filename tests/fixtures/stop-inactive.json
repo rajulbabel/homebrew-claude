@@ -1,0 +1,1 @@
+{"stop_hook_active":false,"cwd":"/tmp/test-project","session_id":"test-123","last_assistant_message":"Done. I've updated the configuration file and verified all tests pass.\n\n## Changes\n- Updated `config.json` with new API endpoint\n- Added error handling for timeout scenarios\n- All 42 tests pass"}

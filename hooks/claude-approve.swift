@@ -1,4 +1,3 @@
-#!/usr/bin/env swift
 //
 //  claude-approve.swift
 //  Claude Code Hook — PreToolUse Permission Dialog
@@ -62,7 +61,7 @@ struct PermOption {
 }
 
 /// Represents a single operation in a unified diff.
-enum DiffOp {
+enum DiffOp: Equatable {
     case context(String)
     case removal(String)
     case addition(String)
@@ -239,7 +238,7 @@ private func parseHookInput() -> HookInput {
 ///
 /// - Parameter input: The parsed hook input containing session and tool info.
 /// - Returns: `true` if the tool was auto-approved (response already written), `false` otherwise.
-private func checkSessionAutoApprove(input: HookInput) -> Bool {
+func checkSessionAutoApprove(input: HookInput) -> Bool {
     guard let path = input.sessionFilePath,
           let contents = try? String(contentsOfFile: path, encoding: .utf8),
           contents.components(separatedBy: "\n").contains(input.toolName) else {
@@ -259,7 +258,7 @@ private func checkSessionAutoApprove(input: HookInput) -> Bool {
 ///
 /// - Parameter input: The parsed hook input containing the tool name.
 /// - Returns: `true` if the tool was auto-approved (response already written), `false` otherwise.
-private func checkAlwaysApprove(input: HookInput) -> Bool {
+func checkAlwaysApprove(input: HookInput) -> Bool {
     guard let data = FileManager.default.contents(atPath: HookInput.autoApprovePath),
           let tools = try? JSONSerialization.jsonObject(with: data) as? [String],
           tools.contains(input.toolName) else {
@@ -280,7 +279,7 @@ private func checkAlwaysApprove(input: HookInput) -> Bool {
 /// - Parameters:
 ///   - input: The parsed hook input containing the session file path.
 ///   - entry: The tool name to add to the session's approved list.
-private func saveToSessionFile(input: HookInput, entry: String) {
+func saveToSessionFile(input: HookInput, entry: String) {
     guard let path = input.sessionFilePath else { return }
     try? FileManager.default.createDirectory(
         atPath: HookInput.sessionDirectory, withIntermediateDirectories: true
@@ -301,7 +300,7 @@ private func saveToSessionFile(input: HookInput, entry: String) {
 /// - Parameters:
 ///   - input: The parsed hook input containing the project working directory.
 ///   - rule: The permission rule string to add (e.g., `"Bash(git *)"`, `"WebFetch"`).
-private func saveToLocalSettings(input: HookInput, rule: String) {
+func saveToLocalSettings(input: HookInput, rule: String) {
     let settingsDir = input.cwd + "/.claude"
     let settingsPath = settingsDir + "/settings.local.json"
     try? FileManager.default.createDirectory(atPath: settingsDir, withIntermediateDirectories: true)
@@ -332,7 +331,7 @@ private func saveToLocalSettings(input: HookInput, rule: String) {
 /// - Parameters:
 ///   - decision: The permission decision — `"allow"` or `"deny"`.
 ///   - reason: A human-readable reason string explaining the decision.
-private func writeHookResponse(decision: String, reason: String) {
+func writeHookResponse(decision: String, reason: String) {
     let response: [String: Any] = ["hookSpecificOutput": [
         "hookEventName": "PreToolUse",
         "permissionDecision": decision,
@@ -357,7 +356,7 @@ private func writeHookResponse(decision: String, reason: String) {
 ///
 /// - Parameter input: The parsed hook input containing the tool name and parameters.
 /// - Returns: A concise human-readable summary of the operation.
-private func buildGist(input: HookInput) -> String {
+func buildGist(input: HookInput) -> String {
     switch input.toolName {
     case "Bash":
         let cmd = input.toolInput["command"] as? String ?? ""
@@ -399,14 +398,14 @@ private func buildGist(input: HookInput) -> String {
 }
 
 /// Extracts the last path component from an optional tool input value.
-private func lastComponent(_ value: Any?) -> String {
+func lastComponent(_ value: Any?) -> String {
     ((value as? String ?? "") as NSString).lastPathComponent
 }
 
 /// Summarizes a Bash command to just its command names joined by operators.
 ///
 /// Example: `cd ~/.claude/hooks && swiftc -framework AppKit -o out file.swift` → `cd && swiftc`
-private func summarizeBashCommand(_ cmd: String) -> String {
+func summarizeBashCommand(_ cmd: String) -> String {
     let line = cmd.components(separatedBy: "\n").first ?? cmd
     let operators = ["&&", "||", "|", ";"]
     var summary = [String]()
@@ -445,7 +444,7 @@ private func summarizeBashCommand(_ cmd: String) -> String {
 ///   - raw: The raw string potentially containing ANSI escape sequences.
 ///   - defaultColor: The base text color used when no ANSI code is active.
 /// - Returns: An `NSAttributedString` with monospaced font and ANSI-derived colors.
-private func parseAnsiCodes(_ raw: String, defaultColor: NSColor = Theme.codeText) -> NSAttributedString {
+func parseAnsiCodes(_ raw: String, defaultColor: NSColor = Theme.codeText) -> NSAttributedString {
     let result = NSMutableAttributedString()
     var currentColor = defaultColor
     let segments = raw.components(separatedBy: "\u{1b}[")
@@ -474,7 +473,7 @@ private func parseAnsiCodes(_ raw: String, defaultColor: NSColor = Theme.codeTex
 }
 
 /// Maps an ANSI color code to an NSColor, or `nil` if not recognized.
-private func ansiColor(code: Int, defaultColor: NSColor) -> NSColor? {
+func ansiColor(code: Int, defaultColor: NSColor) -> NSColor? {
     switch code {
     case 0:  return defaultColor
     case 30: return NSColor(calibratedWhite: 0.35, alpha: 1)
@@ -499,12 +498,12 @@ private func ansiColor(code: Int, defaultColor: NSColor) -> NSColor? {
 }
 
 /// Creates a monospaced attributed string fragment with the given color.
-private func styledCode(_ text: String, color: NSColor) -> NSAttributedString {
+func styledCode(_ text: String, color: NSColor) -> NSAttributedString {
     NSAttributedString(string: text, attributes: [.font: Theme.mono, .foregroundColor: color])
 }
 
 /// Shell keywords recognized by the Bash syntax highlighter.
-private let bashKeywords: Set<String> = [
+let bashKeywords: Set<String> = [
     "if", "then", "else", "elif", "fi", "for", "while", "do", "done",
     "case", "esac", "in", "function", "return", "exit", "export",
     "local", "set", "unset", "source", "eval",
@@ -517,7 +516,7 @@ private let bashKeywords: Set<String> = [
 ///
 /// - Parameter cmd: The raw Bash command string to highlight.
 /// - Returns: An `NSAttributedString` with per-token syntax coloring.
-private func highlightBash(_ cmd: String) -> NSAttributedString {
+func highlightBash(_ cmd: String) -> NSAttributedString {
     let result = NSMutableAttributedString()
     let lines = cmd.components(separatedBy: "\n")
 
@@ -602,7 +601,7 @@ private func highlightBashLine(_ line: String, into result: NSMutableAttributedS
 ///   - oldStr: The original text (before the edit).
 ///   - newStr: The replacement text (after the edit).
 /// - Returns: An array of `DiffOp` values representing context, removals, and additions.
-private func computeLineDiff(old oldStr: String, new newStr: String) -> [DiffOp] {
+func computeLineDiff(old oldStr: String, new newStr: String) -> [DiffOp] {
     let oldLines = oldStr.components(separatedBy: "\n")
     let newLines = newStr.components(separatedBy: "\n")
     let m = oldLines.count
@@ -647,7 +646,7 @@ private func computeLineDiff(old oldStr: String, new newStr: String) -> [DiffOp]
 }
 
 /// Collapses long runs of unchanged context lines into an ellipsis marker.
-private func collapseContext(_ ops: [DiffOp]) -> [DiffOp] {
+func collapseContext(_ ops: [DiffOp]) -> [DiffOp] {
     var result = [DiffOp]()
     var contextRun = [String]()
 
@@ -682,7 +681,7 @@ private func collapseContext(_ ops: [DiffOp]) -> [DiffOp] {
 ///   - filePath: Absolute path to the file to search.
 ///   - oldString: The multi-line text to locate in the file.
 /// - Returns: The 1-based line number where the match starts, or `1` if not found.
-private func findStartLine(filePath: String, oldString: String) -> Int {
+func findStartLine(filePath: String, oldString: String) -> Int {
     guard let content = try? String(contentsOfFile: filePath, encoding: .utf8) else { return 1 }
     let fileLines = content.components(separatedBy: "\n")
     let searchLines = oldString.components(separatedBy: "\n")
@@ -709,7 +708,7 @@ private func findStartLine(filePath: String, oldString: String) -> Int {
 ///
 /// - Parameter input: The parsed hook input containing tool name and parameters.
 /// - Returns: An `NSAttributedString` with the formatted content for display in the code block.
-private func buildContent(input: HookInput) -> NSAttributedString {
+func buildContent(input: HookInput) -> NSAttributedString {
     let result = NSMutableAttributedString()
 
     /// Appends a label line (dim monospaced text).
@@ -927,7 +926,7 @@ private func appendDiffLine(
 ///
 /// - Parameter input: The parsed hook input containing tool name and parameters.
 /// - Returns: An array of `PermOption` values for display as dialog buttons.
-private func buildPermOptions(input: HookInput) -> [PermOption] {
+func buildPermOptions(input: HookInput) -> [PermOption] {
     switch input.toolName {
     case "Bash":
         let cmd = input.toolInput["command"] as? String ?? ""
@@ -989,7 +988,7 @@ private func buildPermOptions(input: HookInput) -> [PermOption] {
 ///
 /// - Parameter options: The permission options whose labels determine button widths.
 /// - Returns: A tuple of row layouts (indices into `options`) and the total height in points.
-private func computeButtonRows(options: [PermOption]) -> (rows: [[Int]], totalHeight: CGFloat) {
+func computeButtonRows(options: [PermOption]) -> (rows: [[Int]], totalHeight: CGFloat) {
     let availableWidth = Layout.panelWidth - Layout.buttonMargin * 2
     let naturalWidths = options.map { opt in
         (opt.label as NSString).size(withAttributes: [.font: Theme.buttonFont]).width + Layout.buttonPadding * 2
@@ -1027,7 +1026,7 @@ private func computeButtonRows(options: [PermOption]) -> (rows: [[Int]], totalHe
 ///   - content: The attributed string to measure.
 ///   - width: The available horizontal space in points.
 /// - Returns: The required height in points, including vertical padding.
-private func measureContentHeight(_ content: NSAttributedString, width: CGFloat) -> CGFloat {
+func measureContentHeight(_ content: NSAttributedString, width: CGFloat) -> CGFloat {
     let textStorage = NSTextStorage(attributedString: content)
     let layoutManager = NSLayoutManager()
     textStorage.addLayoutManager(layoutManager)
@@ -1883,7 +1882,7 @@ private func showPermissionDialog(
 ///   - resultKey: The `resultKey` from the selected `PermOption`.
 ///   - input: The parsed hook input for persistence (session file, project settings).
 /// - Returns: A tuple of the hook decision (`"allow"` or `"deny"`) and a reason string.
-private func processResult(resultKey: String, input: HookInput) -> (decision: String, reason: String) {
+func processResult(resultKey: String, input: HookInput) -> (decision: String, reason: String) {
     switch resultKey {
     case "allow_once":
         return ("allow", "Allowed once via dialog")
@@ -1933,46 +1932,57 @@ private func processResult(resultKey: String, input: HookInput) -> (decision: St
 /// 4. Build dialog content and show the permission dialog
 /// 5. Process the result and write the hook response to stdout
 
-let input = parseHookInput()
+private func approveMain() {
+    let input = parseHookInput()
 
-// Fast path: skip dialog if tool is in the persistent always-approve list
-if checkAlwaysApprove(input: input) {
+    // Fast path: skip dialog if tool is in the persistent always-approve list
+    if checkAlwaysApprove(input: input) {
+        exit(0)
+    }
+
+    // Fast path: skip dialog if tool is already approved for this session
+    if checkSessionAutoApprove(input: input) {
+        exit(0)
+    }
+
+    // Capture terminal/IDE before activating our own UI
+    capturedTerminalApp = NSWorkspace.shared.frontmostApplication
+
+    // Initialize headless NSApplication (no Dock icon)
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    NSSound(named: "Funk")?.play()
+
+    // Build dialog data
+    let permOptions = buildPermOptions(input: input)
+    let contentAttr = buildContent(input: input)
+    let gist = buildGist(input: input)
+    let (buttonRows, optionsHeight) = computeButtonRows(options: permOptions)
+
+    // Show dialog and get user's choice
+    let resultKey = showPermissionDialog(
+        input: input,
+        options: permOptions,
+        content: contentAttr,
+        gist: gist,
+        buttonRows: buttonRows,
+        optionsHeight: optionsHeight
+    )
+
+    // Process result: persist approvals and write response immediately
+    let (decision, reason) = processResult(resultKey: resultKey, input: input)
+    writeHookResponse(decision: decision, reason: reason)
+
+    // Signal next sibling AFTER response is delivered to Claude Code
+    notifyNextSiblingDialog()
     exit(0)
 }
 
-// Fast path: skip dialog if tool is already approved for this session
-if checkSessionAutoApprove(input: input) {
-    exit(0)
+#if !TESTING
+@main
+enum ApproveEntry {
+    static func main() {
+        approveMain()
+    }
 }
-
-// Capture terminal/IDE before activating our own UI
-capturedTerminalApp = NSWorkspace.shared.frontmostApplication
-
-// Initialize headless NSApplication (no Dock icon)
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
-NSSound(named: "Funk")?.play()
-
-// Build dialog data
-let permOptions = buildPermOptions(input: input)
-let contentAttr = buildContent(input: input)
-let gist = buildGist(input: input)
-let (buttonRows, optionsHeight) = computeButtonRows(options: permOptions)
-
-// Show dialog and get user's choice
-let resultKey = showPermissionDialog(
-    input: input,
-    options: permOptions,
-    content: contentAttr,
-    gist: gist,
-    buttonRows: buttonRows,
-    optionsHeight: optionsHeight
-)
-
-// Process result: persist approvals and write response immediately
-let (decision, reason) = processResult(resultKey: resultKey, input: input)
-writeHookResponse(decision: decision, reason: reason)
-
-// Signal next sibling AFTER response is delivered to Claude Code
-notifyNextSiblingDialog()
-exit(0)
+#endif
