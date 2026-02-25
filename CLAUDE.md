@@ -9,8 +9,8 @@ that runs as a PreToolUse hook.
 ## Build
 
 ```bash
-cd hooks && swiftc -framework AppKit -o claude-approve claude-approve.swift
-cd hooks && swiftc -framework AppKit -o claude-stop    claude-stop.swift
+cd hooks && swiftc -O -framework AppKit -o claude-approve claude-approve.swift
+cd hooks && swiftc -O -framework AppKit -o claude-stop    claude-stop.swift
 ```
 
 Always recompile after editing Swift source. Binaries must be at

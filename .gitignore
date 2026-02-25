@@ -18,9 +18,10 @@ todos/
 # Session data
 /tmp/
 
-# Personal config
+# Personal config (user-specific, not project-level)
 settings.json
-.claude/
+.claude/settings.local.json
+.claude/worktrees/
 memory/
 telemetry/
 

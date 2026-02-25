@@ -35,7 +35,7 @@ git clone git@github.com:rajulbabel/homebrew-claude.git /tmp/.claude-hooks && py
 
 Restart Claude Code after installing.
 
-> **Intel Mac?** Recompile: `cd ~/.claude/hooks && swiftc -framework AppKit -o claude-approve claude-approve.swift`
+> **Intel Mac?** Recompile: `cd ~/.claude/hooks && swiftc -O -framework AppKit -o claude-approve claude-approve.swift && swiftc -O -framework AppKit -o claude-stop claude-stop.swift`
 
 ## Uninstall
 

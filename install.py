@@ -28,26 +28,18 @@ GITHUB_RAW = "https://raw.githubusercontent.com/rajulbabel/homebrew-claude/main"
 HOOK_FILES = [
     "hooks/claude-approve",
     "hooks/claude-approve.swift",
-    "hooks/claude-notify",
-    "hooks/claude-notify.swift",
     "hooks/claude-stop",
     "hooks/claude-stop.swift",
-    "hooks/notify-and-approve.sh",
-    "hooks/cleanup-pending.sh",
     "hooks/auto-approve.json",
 ]
 
 EXECUTABLES = [
     "hooks/claude-approve",
-    "hooks/claude-notify",
     "hooks/claude-stop",
-    "hooks/notify-and-approve.sh",
-    "hooks/cleanup-pending.sh",
 ]
 
 SWIFT_BINARIES = [
     ("claude-approve.swift", "claude-approve"),
-    ("claude-notify.swift", "claude-notify"),
     ("claude-stop.swift", "claude-stop"),
 ]
 
@@ -179,7 +171,7 @@ def recompile_binaries():
     for src, dst in SWIFT_BINARIES:
         src_path = os.path.join(hooks_dir, src)
         dst_path = os.path.join(hooks_dir, dst)
-        cmd = ["swiftc", "-framework", "AppKit", "-o", dst_path, src_path]
+        cmd = ["swiftc", "-O", "-framework", "AppKit", "-o", dst_path, src_path]
         print(f"  {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
