@@ -44,8 +44,11 @@ struct HookInput {
     /// Path to the persistent auto-approve config listing tool names to always allow.
     static let autoApprovePath = NSString("~/.claude/hooks/auto-approve.json").expandingTildeInPath
 
-    /// Project directory name (last path component of `cwd`).
-    var projectName: String { (cwd as NSString).lastPathComponent }
+    /// Project directory name (last path component of `cwd`), or "Claude Code" if cwd is empty.
+    var projectName: String {
+        let name = (cwd as NSString).lastPathComponent
+        return name.isEmpty || name == "/" ? "Claude Code" : name
+    }
 
     /// Path to the session auto-approve file, or `nil` if `sessionId` is empty.
     ///
