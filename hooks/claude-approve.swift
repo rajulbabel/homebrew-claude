@@ -37,6 +37,7 @@ struct HookInput {
     let toolInput: [String: Any]
     let cwd: String
     let sessionId: String
+    let permissionMode: String
 
     /// Directory for session auto-approve files.
     static let sessionDirectory = "/tmp/claude-hook-sessions"
@@ -234,10 +235,11 @@ private func parseHookInput() -> HookInput {
     let data = FileHandle.standardInput.readDataToEndOfFile()
     let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
     return HookInput(
-        toolName:  json["tool_name"]  as? String ?? "",
-        toolInput: json["tool_input"] as? [String: Any] ?? [:],
-        cwd:       json["cwd"]        as? String ?? "",
-        sessionId: json["session_id"] as? String ?? ""
+        toolName:       json["tool_name"]       as? String ?? "",
+        toolInput:      json["tool_input"]      as? [String: Any] ?? [:],
+        cwd:            json["cwd"]             as? String ?? "",
+        sessionId:      json["session_id"]      as? String ?? "",
+        permissionMode: json["permission_mode"] as? String ?? ""
     )
 }
 
@@ -1953,6 +1955,12 @@ private func approveMain() {
     // Fast path: deny immediately if stdin was empty or missing tool_name
     if input.toolName.isEmpty {
         writeHookResponse(decision: "deny", reason: "Invalid or missing hook input")
+        exit(0)
+    }
+
+    // Fast path: honor --dangerously-skip-permissions (but not for user-input tools)
+    if input.permissionMode == "bypassPermissions" && input.toolName != "AskUserQuestion" {
+        writeHookResponse(decision: "allow", reason: "Permissions bypassed (--dangerously-skip-permissions)")
         exit(0)
     }
 

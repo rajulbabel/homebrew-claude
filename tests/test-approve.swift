@@ -17,9 +17,10 @@ func makeInput(
     tool: String = "Bash",
     input: [String: Any] = [:],
     cwd: String = "/tmp/test-project",
-    session: String = ""
+    session: String = "",
+    permissionMode: String = ""
 ) -> HookInput {
-    HookInput(toolName: tool, toolInput: input, cwd: cwd, sessionId: session)
+    HookInput(toolName: tool, toolInput: input, cwd: cwd, sessionId: session, permissionMode: permissionMode)
 }
 
 /// Returns a unique session ID scoped to this PID (for test isolation).
