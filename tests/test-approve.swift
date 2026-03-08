@@ -955,6 +955,47 @@ func testSessionDirectoryPermissions() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MARK: - Claude Desktop Resume URL Tests (5)
+// ═══════════════════════════════════════════════════════════════════
+
+func testBuildClaudeDesktopResumeURL() {
+    test("claudeDesktopURL: basic UUID session") {
+        let url = buildClaudeDesktopResumeURL(
+            sessionId: "288705bd-7482-4ca7-88f5-f5c2f67f8f87",
+            cwd: "/Users/test/project"
+        )
+        assertEq(url != nil, true)
+        assertContains(url!, "claude://resume")
+        assertContains(url!, "session=288705bd-7482-4ca7-88f5-f5c2f67f8f87")
+        assertContains(url!, "cwd=")
+    }
+    test("claudeDesktopURL: empty session returns nil") {
+        let url = buildClaudeDesktopResumeURL(sessionId: "", cwd: "/tmp")
+        assertTrue(url == nil, "empty sessionId should return nil")
+    }
+    test("claudeDesktopURL: cwd with spaces is percent-encoded") {
+        let url = buildClaudeDesktopResumeURL(
+            sessionId: "abc-123", cwd: "/Users/test/my project"
+        )
+        assertEq(url != nil, true)
+        assertContains(url!, "my%20project")
+    }
+    test("claudeDesktopURL: scheme and host are correct") {
+        let url = buildClaudeDesktopResumeURL(
+            sessionId: "abc-123", cwd: "/tmp"
+        )
+        assertTrue(url?.hasPrefix("claude://resume?") == true)
+    }
+    test("claudeDesktopURL: both query params present") {
+        let url = buildClaudeDesktopResumeURL(
+            sessionId: "sess-1", cwd: "/dir"
+        )!
+        assertContains(url, "session=sess-1")
+        assertContains(url, "cwd=/dir")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MARK: - Main Entry Point
 // ═══════════════════════════════════════════════════════════════════
 
@@ -980,6 +1021,7 @@ enum ApproveTests {
         testSaveToLocalSettings()
         testSessionFilePathSanitization()
         testSessionDirectoryPermissions()
+        testBuildClaudeDesktopResumeURL()
 
         exit(printSummary())
     }

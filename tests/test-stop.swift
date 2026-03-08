@@ -288,6 +288,73 @@ func testStopContentCap() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MARK: - StopInput sessionId Tests (3)
+// ═══════════════════════════════════════════════════════════════════
+
+func testStopInputSessionId() {
+    test("StopInput: sessionId from init") {
+        let input = StopInput(
+            stopHookActive: false, cwd: "/tmp", lastMessage: "", sessionId: "abc-123"
+        )
+        assertEq(input.sessionId, "abc-123")
+    }
+    test("StopInput: empty sessionId") {
+        let input = StopInput(
+            stopHookActive: false, cwd: "/tmp", lastMessage: "", sessionId: ""
+        )
+        assertEq(input.sessionId, "")
+    }
+    test("StopInput: UUID sessionId") {
+        let uuid = "288705bd-7482-4ca7-88f5-f5c2f67f8f87"
+        let input = StopInput(
+            stopHookActive: false, cwd: "/tmp", lastMessage: "", sessionId: uuid
+        )
+        assertEq(input.sessionId, uuid)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MARK: - Claude Desktop Resume URL Tests (5)
+// ═══════════════════════════════════════════════════════════════════
+
+func testBuildClaudeDesktopResumeURL() {
+    test("claudeDesktopURL: basic UUID session") {
+        let url = buildClaudeDesktopResumeURL(
+            sessionId: "288705bd-7482-4ca7-88f5-f5c2f67f8f87",
+            cwd: "/Users/test/project"
+        )
+        assertEq(url != nil, true)
+        assertContains(url!, "claude://resume")
+        assertContains(url!, "session=288705bd-7482-4ca7-88f5-f5c2f67f8f87")
+        assertContains(url!, "cwd=")
+    }
+    test("claudeDesktopURL: empty session returns nil") {
+        let url = buildClaudeDesktopResumeURL(sessionId: "", cwd: "/tmp")
+        assertTrue(url == nil, "empty sessionId should return nil")
+    }
+    test("claudeDesktopURL: cwd with spaces is percent-encoded") {
+        let url = buildClaudeDesktopResumeURL(
+            sessionId: "abc-123", cwd: "/Users/test/my project"
+        )
+        assertEq(url != nil, true)
+        assertContains(url!, "my%20project")
+    }
+    test("claudeDesktopURL: scheme and host are correct") {
+        let url = buildClaudeDesktopResumeURL(
+            sessionId: "abc-123", cwd: "/tmp"
+        )
+        assertTrue(url?.hasPrefix("claude://resume?") == true)
+    }
+    test("claudeDesktopURL: both query params present") {
+        let url = buildClaudeDesktopResumeURL(
+            sessionId: "sess-1", cwd: "/dir"
+        )!
+        assertContains(url, "session=sess-1")
+        assertContains(url, "cwd=/dir")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MARK: - Main Entry Point
 // ═══════════════════════════════════════════════════════════════════
 
@@ -302,6 +369,8 @@ enum StopTests {
         testItalicVariant()
         testThemeAndLayout()
         testStopContentCap()
+        testStopInputSessionId()
+        testBuildClaudeDesktopResumeURL()
 
         exit(printSummary())
     }

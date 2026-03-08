@@ -28,6 +28,7 @@ struct StopInput {
     let stopHookActive: Bool
     let cwd: String
     let lastMessage: String
+    let sessionId: String
 
     /// Directory name shown as the project heading.
     var projectName: String { (cwd as NSString).lastPathComponent }
@@ -131,7 +132,8 @@ private func parseStopInput() -> StopInput {
     return StopInput(
         stopHookActive: json["stop_hook_active"] as? Bool   ?? false,
         cwd:            json["cwd"]              as? String ?? "",
-        lastMessage:    json["last_assistant_message"] as? String ?? ""
+        lastMessage:    json["last_assistant_message"] as? String ?? "",
+        sessionId:      json["session_id"]       as? String ?? ""
     )
 }
 
@@ -715,11 +717,14 @@ private func searchAXTree(element: AXUIElement, needle: String, roles: Set<Strin
 /// - **iTerm2**: AppleScript session selection by TTY with inline activation.
 /// - **Warp**: TTY marker + tab cycling via Cmd+Shift+].
 /// - **JetBrains IDEs**: AX window-title match + AX deep search for Terminal tool.
+/// - **Claude desktop**: `claude://resume` deep link to navigate to the Code session.
 /// - **Other** (VS Code, Kitty, etc.): AX window-title match, standard activation.
 ///
-/// - Parameter cwd: The current working directory, used to extract the project
-///   name for window-title matching.
-private func openTerminalApp(cwd: String) {
+/// - Parameters:
+///   - cwd: The current working directory, used to extract the project
+///     name for window-title matching.
+///   - sessionId: The Claude CLI session ID, used for Claude desktop deep links.
+private func openTerminalApp(cwd: String, sessionId: String = "") {
     let (tty, parentApp) = resolveProcessAncestry()
     guard let app = parentApp ?? capturedTerminalApp else { return }
 
@@ -760,6 +765,13 @@ private func openTerminalApp(cwd: String) {
         let toolRoles: Set<String> = ["AXButton", "AXRadioButton", "AXTab", "AXCheckBox", "AXStaticText"]
         focusAXDescendant(app: app, matching: "Terminal", roles: toolRoles)
 
+    case "com.anthropic.claudefordesktop":
+        // Claude desktop is Electron with a separate Code BrowserWindow.
+        // `reopen` and NSWorkspace.open(cwd) switch to Chat/Cowork, so skip
+        // those. Use the `claude://resume` deep link to navigate to the
+        // correct Code session, then `activate` to bring the app to front.
+        openClaudeDesktop(bundleId: bundleId, sessionId: sessionId, cwd: cwd)
+
     default:
         // VS Code, Kitty, and other terminals.
         if !focusAXWindowByTitle(app: app, substring: projectName) {
@@ -776,6 +788,50 @@ private func openTerminalApp(cwd: String) {
             _ = sem.wait(timeout: .now() + 3)
         }
     }
+}
+
+/// Builds the `claude://resume` deep link URL for a given session.
+///
+/// - Parameters:
+///   - sessionId: The CLI session UUID.
+///   - cwd: The session's working directory.
+/// - Returns: The deep link URL string, or `nil` if `sessionId` is empty.
+func buildClaudeDesktopResumeURL(sessionId: String, cwd: String) -> String? {
+    guard !sessionId.isEmpty else { return nil }
+    var comps = URLComponents()
+    comps.scheme = "claude"
+    comps.host = "resume"
+    comps.queryItems = [
+        URLQueryItem(name: "session", value: sessionId),
+        URLQueryItem(name: "cwd", value: cwd),
+    ]
+    return comps.url?.absoluteString
+}
+
+/// Activates Claude desktop by navigating to the correct Code session.
+///
+/// Sends a `claude://resume` deep link to switch to the CLI session identified
+/// by `sessionId`, then activates the app via AppleScript. The deep link is
+/// opened via `/usr/bin/open` because `NSWorkspace.shared.open` does not
+/// reliably trigger the Electron URL handler from an accessory-mode process.
+///
+/// - Parameters:
+///   - bundleId: The Claude desktop bundle identifier.
+///   - sessionId: The CLI session UUID to resume.
+///   - cwd: The session's working directory.
+private func openClaudeDesktop(bundleId: String, sessionId: String, cwd: String) {
+    if let urlString = buildClaudeDesktopResumeURL(sessionId: sessionId, cwd: cwd) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        p.arguments = [urlString]
+        try? p.run()
+        p.waitUntilExit()
+    }
+    runAppleScript("""
+    tell application id "\(bundleId)"
+        activate
+    end tell
+    """)
 }
 
 // MARK: - Button Handler
@@ -1143,7 +1199,7 @@ private func showStopDialog(input: StopInput) {
     // the panel covers the terminal window at the floating level.
     panel.orderOut(nil)
 
-    if handler.goToTerminal { openTerminalApp(cwd: input.cwd) }
+    if handler.goToTerminal { openTerminalApp(cwd: input.cwd, sessionId: input.sessionId) }
 }
 
 // MARK: - Main Entry Point
