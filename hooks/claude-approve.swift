@@ -51,6 +51,33 @@ struct HookInput {
         return name.isEmpty || name == "/" ? "Claude Code" : name
     }
 
+    /// Whether this tool is an MCP tool (name starts with `mcp__`).
+    var isMCP: Bool { toolName.hasPrefix("mcp__") }
+
+    /// The MCP server name extracted from the tool name (e.g., "clickup" from "mcp__clickup__get_task").
+    /// Returns an empty string for non-MCP tools.
+    var mcpServer: String {
+        guard isMCP else { return "" }
+        let parts = toolName.split(separator: "_", maxSplits: 4, omittingEmptySubsequences: false)
+        // Format: mcp__<server>__<tool> → parts: ["mcp", "", "<server>", "", ...]
+        return parts.count >= 3 ? String(parts[2]) : ""
+    }
+
+    /// The MCP tool action name (e.g., "get_task" from "mcp__clickup__get_task").
+    /// Returns the full tool name for non-MCP tools.
+    var mcpAction: String {
+        guard isMCP else { return toolName }
+        // Drop "mcp__<server>__" prefix
+        let prefix = "mcp__\(mcpServer)__"
+        return toolName.hasPrefix(prefix) ? String(toolName.dropFirst(prefix.count)) : toolName
+    }
+
+    /// A short display name for the tag pill. For MCP tools returns the server name
+    /// (e.g., "clickup"), otherwise the original tool name.
+    var displayName: String {
+        isMCP ? mcpServer : toolName
+    }
+
     /// Path to the session auto-approve file, or `nil` if `sessionId` is empty.
     ///
     /// Sanitizes the session ID to prevent path traversal — only ASCII
@@ -139,9 +166,13 @@ enum Theme {
     static let gutterFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
     static let buttonFont = NSFont.systemFont(ofSize: 12.5, weight: .bold)
 
+    /// Color for MCP tool tags — a distinctive teal/cyan.
+    static let mcpTag = NSColor(calibratedRed: 0.30, green: 0.75, blue: 0.70, alpha: 1)
+
     /// Returns the tag color for a given tool name, with a neutral fallback.
+    /// MCP tools (identified by their display name not being in the built-in map) get a distinct teal color.
     static func tagColor(for tool: String) -> NSColor {
-        toolTagColors[tool] ?? NSColor(calibratedWhite: 0.65, alpha: 1)
+        toolTagColors[tool] ?? mcpTag
     }
 }
 
@@ -410,6 +441,14 @@ func buildGist(input: HookInput) -> String {
         }
         return "Question"
     default:
+        if input.isMCP {
+            // Show readable action name: "clickup_get_task" → "Get Task"
+            let words = input.mcpAction
+                .replacingOccurrences(of: "_", with: " ")
+                .split(separator: " ")
+                .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            return words.joined(separator: " ")
+        }
         return input.toolName
     }
 }
@@ -839,7 +878,24 @@ func buildContent(input: HookInput) -> NSAttributedString {
         }
 
     default:
-        if let data = try? JSONSerialization.data(withJSONObject: input.toolInput, options: .prettyPrinted),
+        if input.isMCP {
+            // Display MCP parameters as labeled fields
+            let sortedKeys = input.toolInput.keys.sorted()
+            for key in sortedKeys {
+                let value = input.toolInput[key]
+                let displayValue: String
+                if let str = value as? String {
+                    displayValue = str
+                } else if let data = try? JSONSerialization.data(
+                    withJSONObject: value as Any, options: .prettyPrinted),
+                    let str = String(data: data, encoding: .utf8) {
+                    displayValue = str
+                } else {
+                    displayValue = "\(value ?? "")"
+                }
+                appendLabel("\(key): \(displayValue)")
+            }
+        } else if let data = try? JSONSerialization.data(withJSONObject: input.toolInput, options: .prettyPrinted),
            let jsonStr = String(data: data, encoding: .utf8) {
             appendBlock(jsonStr)
         }
@@ -988,6 +1044,18 @@ func buildPermOptions(input: HookInput) -> [PermOption] {
         ]
 
     default:
+        if input.isMCP {
+            let server = input.mcpServer
+            return [
+                PermOption(label: "Yes", resultKey: "allow_once", color: Theme.buttonAllow),
+                PermOption(
+                    label: "Yes, and don't ask again for \(server) commands in \(input.projectName)",
+                    resultKey: "dont_ask_mcp_server",
+                    color: Theme.buttonPersist
+                ),
+                PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny),
+            ]
+        }
         return [
             PermOption(label: "Yes", resultKey: "allow_once", color: Theme.buttonAllow),
             PermOption(label: "Yes, during this session", resultKey: "allow_session", color: Theme.buttonPersist),
@@ -1890,7 +1958,7 @@ private func showPermissionDialog(
 
     // Lay out UI sections top-down
     let afterHeader      = addHeader(to: contentView, input: input, panelHeight: panelHeight)
-    let afterTag         = addTagAndGist(to: contentView, toolName: input.toolName,
+    let afterTag         = addTagAndGist(to: contentView, toolName: input.displayName,
                                          gist: gist, yPos: afterHeader)
     let codeBlockBottom  = addCodeBlock(to: contentView, content: content,
                                         yPos: afterTag, blockHeight: codeBlockHeight)
@@ -1984,6 +2052,11 @@ func processResult(resultKey: String, input: HookInput) -> (decision: String, re
     case "dont_ask_tool":
         saveToLocalSettings(input: input, rule: input.toolName)
         return ("allow", "Allowed \(input.toolName) for project")
+
+    case "dont_ask_mcp_server":
+        let rule = "mcp__\(input.mcpServer)__*"
+        saveToLocalSettings(input: input, rule: rule)
+        return ("allow", "Allowed all \(input.mcpServer) MCP tools for project")
 
     case "allow_goto_terminal":
         openTerminalApp(cwd: input.cwd, sessionId: input.sessionId)

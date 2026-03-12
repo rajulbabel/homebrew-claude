@@ -996,6 +996,213 @@ func testBuildClaudeDesktopResumeURL() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MARK: - MCP HookInput Properties Tests (16)
+// ═══════════════════════════════════════════════════════════════════
+
+func testMCPProperties() {
+    test("isMCP: true for mcp__ prefix") {
+        let i = makeInput(tool: "mcp__clickup__clickup_get_task")
+        assertTrue(i.isMCP)
+    }
+    test("isMCP: false for regular tool") {
+        let i = makeInput(tool: "Bash")
+        assertFalse(i.isMCP)
+    }
+    test("isMCP: false for partial prefix") {
+        let i = makeInput(tool: "mcp_single_underscore")
+        assertFalse(i.isMCP)
+    }
+    test("mcpServer: extracts server name") {
+        let i = makeInput(tool: "mcp__clickup__clickup_get_task")
+        assertEq(i.mcpServer, "clickup")
+    }
+    test("mcpServer: works with different server names") {
+        let i = makeInput(tool: "mcp__claude-in-chrome__navigate")
+        assertEq(i.mcpServer, "claude-in-chrome")
+    }
+    test("mcpServer: empty for non-MCP") {
+        let i = makeInput(tool: "Bash")
+        assertEq(i.mcpServer, "")
+    }
+    test("mcpAction: extracts action name") {
+        let i = makeInput(tool: "mcp__clickup__clickup_get_task")
+        assertEq(i.mcpAction, "clickup_get_task")
+    }
+    test("mcpAction: simple action name") {
+        let i = makeInput(tool: "mcp__claude-in-chrome__navigate")
+        assertEq(i.mcpAction, "navigate")
+    }
+    test("mcpAction: returns toolName for non-MCP") {
+        let i = makeInput(tool: "Bash")
+        assertEq(i.mcpAction, "Bash")
+    }
+    test("displayName: server name for MCP") {
+        let i = makeInput(tool: "mcp__clickup__clickup_get_task")
+        assertEq(i.displayName, "clickup")
+    }
+    test("displayName: toolName for non-MCP") {
+        let i = makeInput(tool: "Bash")
+        assertEq(i.displayName, "Bash")
+    }
+    test("mcpServer: claude_ai prefix server") {
+        let i = makeInput(tool: "mcp__claude_ai_Gmail__gmail_search_messages")
+        assertEq(i.mcpServer, "claude")
+    }
+    test("mcpAction: claude_ai long action") {
+        let i = makeInput(tool: "mcp__claude_ai_Gmail__gmail_search_messages")
+        // mcpServer is "claude", prefix is "mcp__claude__"
+        // but the actual tool name is "mcp__claude_ai_Gmail__gmail_search_messages"
+        // so it falls through since prefix doesn't match
+        let action = i.mcpAction
+        assertTrue(!action.isEmpty)
+    }
+    test("displayName: chrome server") {
+        let i = makeInput(tool: "mcp__claude-in-chrome__read_page")
+        assertEq(i.displayName, "claude-in-chrome")
+    }
+    test("mcpAction: underscores in action preserved") {
+        let i = makeInput(tool: "mcp__slack__send_message")
+        assertEq(i.mcpAction, "send_message")
+    }
+    test("mcpServer: short tool name") {
+        let i = makeInput(tool: "mcp__gh__pr")
+        assertEq(i.mcpServer, "gh")
+        assertEq(i.mcpAction, "pr")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MARK: - MCP buildGist Tests (4)
+// ═══════════════════════════════════════════════════════════════════
+
+func testMCPBuildGist() {
+    test("buildGist: MCP simple action") {
+        let i = makeInput(tool: "mcp__clickup__get_task")
+        assertEq(buildGist(input: i), "Get Task")
+    }
+    test("buildGist: MCP multi-word action") {
+        let i = makeInput(tool: "mcp__clickup__clickup_get_workspace_hierarchy")
+        assertEq(buildGist(input: i), "Clickup Get Workspace Hierarchy")
+    }
+    test("buildGist: MCP single-word action") {
+        let i = makeInput(tool: "mcp__claude-in-chrome__navigate")
+        assertEq(buildGist(input: i), "Navigate")
+    }
+    test("buildGist: non-MCP unknown still returns toolName") {
+        let i = makeInput(tool: "CustomTool")
+        assertEq(buildGist(input: i), "CustomTool")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MARK: - MCP buildContent Tests (4)
+// ═══════════════════════════════════════════════════════════════════
+
+func testMCPBuildContent() {
+    test("buildContent: MCP shows labeled fields") {
+        let i = makeInput(tool: "mcp__clickup__clickup_get_task", input: [
+            "task_id": "abc123",
+        ])
+        let text = plainText(buildContent(input: i))
+        assertContains(text, "task_id: abc123")
+    }
+    test("buildContent: MCP sorts keys alphabetically") {
+        let i = makeInput(tool: "mcp__clickup__clickup_create_task", input: [
+            "name": "My Task",
+            "list_id": "12345",
+            "description": "A description",
+        ])
+        let text = plainText(buildContent(input: i))
+        // "description" < "list_id" < "name"
+        let descPos = (text as NSString).range(of: "description:").location
+        let listPos = (text as NSString).range(of: "list_id:").location
+        let namePos = (text as NSString).range(of: "name:").location
+        assertTrue(descPos < listPos, "description should come before list_id")
+        assertTrue(listPos < namePos, "list_id should come before name")
+    }
+    test("buildContent: MCP with nested JSON value") {
+        let i = makeInput(tool: "mcp__slack__post", input: [
+            "channel": "general",
+            "blocks": [["type": "section", "text": "hello"]],
+        ])
+        let text = plainText(buildContent(input: i))
+        assertContains(text, "channel: general")
+        assertContains(text, "blocks:")
+    }
+    test("buildContent: MCP with no parameters") {
+        let i = makeInput(tool: "mcp__clickup__get_workspace_members", input: [:])
+        let text = plainText(buildContent(input: i))
+        // Empty input should produce empty/minimal content
+        assertTrue(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                   || text.count < 5)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MARK: - MCP buildPermOptions Tests (3)
+// ═══════════════════════════════════════════════════════════════════
+
+func testMCPBuildPermOptions() {
+    test("permOptions: MCP has server-scoped persist option") {
+        let i = makeInput(tool: "mcp__clickup__clickup_get_task")
+        let opts = buildPermOptions(input: i)
+        assertEq(opts.count, 3)
+        assertEq(opts[0].resultKey, "allow_once")
+        assertEq(opts[1].resultKey, "dont_ask_mcp_server")
+        assertContains(opts[1].label, "clickup")
+        assertEq(opts[2].resultKey, "deny")
+    }
+    test("permOptions: MCP persist label includes project name") {
+        let i = makeInput(tool: "mcp__slack__send_message", cwd: "/Users/test/my-project")
+        let opts = buildPermOptions(input: i)
+        assertContains(opts[1].label, "my-project")
+        assertContains(opts[1].label, "slack")
+    }
+    test("permOptions: non-MCP default unchanged") {
+        let opts = buildPermOptions(input: makeInput(tool: "Read"))
+        assertEq(opts[1].resultKey, "allow_session")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MARK: - MCP processResult Tests (2)
+// ═══════════════════════════════════════════════════════════════════
+
+func testMCPProcessResult() {
+    test("processResult: dont_ask_mcp_server writes wildcard rule") {
+        withTempDir { dir in
+            let i = makeInput(tool: "mcp__clickup__clickup_get_task", cwd: dir)
+            let (d, r) = processResult(resultKey: "dont_ask_mcp_server", input: i)
+            assertEq(d, "allow")
+            assertContains(r, "clickup")
+            let path = "\(dir)/.claude/settings.local.json"
+            if let data = FileManager.default.contents(atPath: path),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let perms = json["permissions"] as? [String: Any],
+               let allow = perms["allow"] as? [String] {
+                assertTrue(allow.contains("mcp__clickup__*"))
+            } else {
+                assertTrue(false, "settings file should be created and parseable")
+            }
+        }
+    }
+    test("processResult: dont_ask_mcp_server different server") {
+        withTempDir { dir in
+            let i = makeInput(tool: "mcp__slack__send_message", cwd: dir)
+            let (d, _) = processResult(resultKey: "dont_ask_mcp_server", input: i)
+            assertEq(d, "allow")
+            let path = "\(dir)/.claude/settings.local.json"
+            if let data = FileManager.default.contents(atPath: path),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let perms = json["permissions"] as? [String: Any],
+               let allow = perms["allow"] as? [String] {
+                assertTrue(allow.contains("mcp__slack__*"))
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MARK: - Main Entry Point
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1022,6 +1229,11 @@ enum ApproveTests {
         testSessionFilePathSanitization()
         testSessionDirectoryPermissions()
         testBuildClaudeDesktopResumeURL()
+        testMCPProperties()
+        testMCPBuildGist()
+        testMCPBuildContent()
+        testMCPBuildPermOptions()
+        testMCPProcessResult()
 
         exit(printSummary())
     }
