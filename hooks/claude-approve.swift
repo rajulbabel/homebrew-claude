@@ -2091,6 +2091,30 @@ private func approveMain() {
         exit(0)
     }
 
+    // Fast path: acceptEdits mode auto-approves file operations
+    // Edit/Write are the explicit grant; read-only tools (Read, Glob, Grep, NotebookEdit)
+    // are also auto-approved since accepting edits implies accepting reads.
+    if input.permissionMode == "acceptEdits" {
+        let acceptEditsTools: Set<String> = ["Edit", "Write", "Read", "Glob", "Grep", "NotebookEdit"]
+        if acceptEditsTools.contains(input.toolName) {
+            writeHookResponse(decision: "allow", reason: "Auto-approved (acceptEdits mode)")
+            exit(0)
+        }
+    }
+
+    // Fast path: plan mode denies all write/execute tools
+    if input.permissionMode == "plan" {
+        let readOnlyTools: Set<String> = ["Read", "Glob", "Grep", "WebFetch", "WebSearch", "AskUserQuestion"]
+        if !readOnlyTools.contains(input.toolName) && !input.isMCP {
+            writeHookResponse(decision: "deny", reason: "Denied (plan mode — read-only)")
+            exit(0)
+        }
+    }
+
+    // Fast path: dontAsk mode denies tools unless pre-approved via settings or session
+    // (falls through to the checkAlwaysApprove/checkSessionAutoApprove checks below,
+    //  and denies if neither applies)
+
     // Fast path: skip dialog if tool is in the persistent always-approve list
     if checkAlwaysApprove(input: input) {
         exit(0)
@@ -2098,6 +2122,12 @@ private func approveMain() {
 
     // Fast path: skip dialog if tool is already approved for this session
     if checkSessionAutoApprove(input: input) {
+        exit(0)
+    }
+
+    // dontAsk mode: deny anything that wasn't caught by the pre-approve checks above
+    if input.permissionMode == "dontAsk" && input.toolName != "AskUserQuestion" {
+        writeHookResponse(decision: "deny", reason: "Denied (dontAsk mode — not pre-approved)")
         exit(0)
     }
 

@@ -55,7 +55,7 @@ between sections.
 
 ## Hook Protocol
 
-- **Input:** JSON on stdin with keys `tool_name`, `tool_input`, `cwd`, `session_id`
+- **Input:** JSON on stdin with keys `tool_name`, `tool_input`, `cwd`, `session_id`, `permission_mode`
 - **Output:** JSON on stdout:
   ```json
   {

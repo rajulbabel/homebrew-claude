@@ -56,11 +56,7 @@ HOOK_ENTRY = {
             "type": "command",
         }
     ],
-    "matcher": (
-        "^(Bash|Edit|Write|Read|NotebookEdit"
-        "|Task|WebFetch|WebSearch|Glob|Grep"
-        "|AskUserQuestion)$"
-    ),
+    "matcher": ".*",
 }
 
 STOP_HOOK_ENTRY = {
