@@ -1,9 +1,9 @@
 class Permit < Formula
   desc "Native macOS permission dialog for Claude Code"
   homepage "https://github.com/rajulbabel/homebrew-claude"
-  url "https://github.com/rajulbabel/homebrew-claude/archive/refs/tags/v1.3.3.tar.gz"
-  sha256 "1f5445289e837565ff7cca0e4036807cffe823c78923dfcee52c9c0985b759f7"
-  version "1.3.3"
+  url "https://github.com/rajulbabel/homebrew-claude/archive/refs/tags/v1.3.4.tar.gz"
+  sha256 "e7525b8724950d33ed1223349773d0955abdc2c9f1aa41276052d58cf68c26b0"
+  version "1.3.4"
   license "MIT"
 
   depends_on :macos
