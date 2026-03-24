@@ -59,7 +59,7 @@ HOOK_ENTRY = {
     "matcher": (
         "^(Bash|Edit|Write|Read|NotebookEdit"
         "|Task|WebFetch|WebSearch|Glob|Grep"
-        "|AskUserQuestion|mcp__.*)$"
+        "|AskUserQuestion|ExitPlanMode|Skill|mcp__.*)$"
     ),
 }
 
