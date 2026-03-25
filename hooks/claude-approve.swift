@@ -886,8 +886,9 @@ func buildContent(input: HookInput) -> NSAttributedString {
                 let displayValue: String
                 if let str = value as? String {
                     displayValue = str
-                } else if let data = try? JSONSerialization.data(
-                    withJSONObject: value as Any, options: .prettyPrinted),
+                } else if let obj = value, JSONSerialization.isValidJSONObject(obj),
+                    let data = try? JSONSerialization.data(
+                        withJSONObject: obj, options: .prettyPrinted),
                     let str = String(data: data, encoding: .utf8) {
                     displayValue = str
                 } else {
