@@ -23,6 +23,14 @@ func makeInput(
     HookInput(toolName: tool, toolInput: input, cwd: cwd, sessionId: session, permissionMode: permissionMode)
 }
 
+/// Creates a ButtonHandler with a preset resultKey for testing processResult.
+func makeHandler(resultKey: String, feedbackText: String = "") -> ButtonHandler {
+    let h = ButtonHandler(options: [])
+    h.result = resultKey
+    h.feedbackText = feedbackText
+    return h
+}
+
 /// Returns a unique session ID scoped to this PID (for test isolation).
 func testSessionId() -> String {
     "test-\(ProcessInfo.processInfo.processIdentifier)-\(Int.random(in: 100000..<999999))"
@@ -634,7 +642,7 @@ func testComputeButtonRows() {
 
 func testProcessResult() {
     test("processResult: allow_once") {
-        let (d, r) = processResult(resultKey: "allow_once", input: makeInput())
+        let (d, r) = processResult(handler: makeHandler(resultKey: "allow_once"), input: makeInput())
         assertEq(d, "allow")
         assertContains(r, "Allowed once")
     }
@@ -642,7 +650,7 @@ func testProcessResult() {
         let sid = testSessionId()
         defer { cleanupSession(sid) }
         let i = makeInput(tool: "Read", session: sid)
-        let (d, _) = processResult(resultKey: "allow_session", input: i)
+        let (d, _) = processResult(handler: makeHandler(resultKey: "allow_session"), input: i)
         assertEq(d, "allow")
         let content = try? String(contentsOfFile: i.sessionFilePath!, encoding: .utf8)
         assertContains(content ?? "", "Read")
@@ -651,7 +659,7 @@ func testProcessResult() {
         let sid = testSessionId()
         defer { cleanupSession(sid) }
         let i = makeInput(tool: "Edit", session: sid)
-        let (d, _) = processResult(resultKey: "allow_edits_session", input: i)
+        let (d, _) = processResult(handler: makeHandler(resultKey: "allow_edits_session"), input: i)
         assertEq(d, "allow")
         let content = try? String(contentsOfFile: i.sessionFilePath!, encoding: .utf8)
         assertContains(content ?? "", "Edit")
@@ -660,7 +668,7 @@ func testProcessResult() {
     test("processResult: dont_ask_bash writes project settings") {
         withTempDir { dir in
             let i = makeInput(tool: "Bash", input: ["command": "git status"], cwd: dir)
-            let (d, _) = processResult(resultKey: "dont_ask_bash", input: i)
+            let (d, _) = processResult(handler: makeHandler(resultKey: "dont_ask_bash"), input: i)
             assertEq(d, "allow")
             let path = "\(dir)/.claude/settings.local.json"
             if let data = FileManager.default.contents(atPath: path),
@@ -678,7 +686,7 @@ func testProcessResult() {
             let i = makeInput(
                 tool: "WebFetch", input: ["url": "https://example.com/page"], cwd: dir
             )
-            let (d, _) = processResult(resultKey: "dont_ask_domain", input: i)
+            let (d, _) = processResult(handler: makeHandler(resultKey: "dont_ask_domain"), input: i)
             assertEq(d, "allow")
             let path = "\(dir)/.claude/settings.local.json"
             if let data = FileManager.default.contents(atPath: path),
@@ -692,7 +700,7 @@ func testProcessResult() {
     test("processResult: dont_ask_tool writes tool rule") {
         withTempDir { dir in
             let i = makeInput(tool: "WebSearch", cwd: dir)
-            let (d, _) = processResult(resultKey: "dont_ask_tool", input: i)
+            let (d, _) = processResult(handler: makeHandler(resultKey: "dont_ask_tool"), input: i)
             assertEq(d, "allow")
             let path = "\(dir)/.claude/settings.local.json"
             if let data = FileManager.default.contents(atPath: path),
@@ -705,12 +713,12 @@ func testProcessResult() {
     }
     test("processResult: allow_goto_terminal") {
         let i = makeInput(tool: "AskUserQuestion", cwd: "/tmp")
-        let (d, r) = processResult(resultKey: "allow_goto_terminal", input: i)
+        let (d, r) = processResult(handler: makeHandler(resultKey: "allow_goto_terminal"), input: i)
         assertEq(d, "allow")
         assertContains(r, "terminal")
     }
     test("processResult: deny") {
-        let (d, r) = processResult(resultKey: "deny", input: makeInput())
+        let (d, r) = processResult(handler: makeHandler(resultKey: "deny"), input: makeInput())
         assertEq(d, "deny")
         assertContains(r, "Rejected")
     }
@@ -1172,7 +1180,7 @@ func testMCPProcessResult() {
     test("processResult: dont_ask_mcp_server writes wildcard rule") {
         withTempDir { dir in
             let i = makeInput(tool: "mcp__clickup__clickup_get_task", cwd: dir)
-            let (d, r) = processResult(resultKey: "dont_ask_mcp_server", input: i)
+            let (d, r) = processResult(handler: makeHandler(resultKey: "dont_ask_mcp_server"), input: i)
             assertEq(d, "allow")
             assertContains(r, "clickup")
             let path = "\(dir)/.claude/settings.local.json"
@@ -1189,7 +1197,7 @@ func testMCPProcessResult() {
     test("processResult: dont_ask_mcp_server different server") {
         withTempDir { dir in
             let i = makeInput(tool: "mcp__slack__send_message", cwd: dir)
-            let (d, _) = processResult(resultKey: "dont_ask_mcp_server", input: i)
+            let (d, _) = processResult(handler: makeHandler(resultKey: "dont_ask_mcp_server"), input: i)
             assertEq(d, "allow")
             let path = "\(dir)/.claude/settings.local.json"
             if let data = FileManager.default.contents(atPath: path),

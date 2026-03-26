@@ -98,6 +98,8 @@ struct PermOption {
     let label: String
     let resultKey: String
     let color: NSColor
+    var textInput: Bool = false
+    var placeholder: String = ""
 }
 
 /// Represents a single operation in a unified diff.
@@ -136,6 +138,12 @@ enum Theme {
     static let buttonDeny      = NSColor(calibratedRed: 1.0,  green: 0.32, blue: 0.32, alpha: 1.0)
     static let buttonRestAlpha: CGFloat = 0.18
     static let buttonPressAlpha: CGFloat = 0.55
+
+    // Text-input morph (No button → text field)
+    static let morphInputBg     = NSColor(calibratedRed: 0.14, green: 0.14, blue: 0.18, alpha: 1.0)
+    static let morphPlaceholder = NSColor(calibratedWhite: 0.42, alpha: 1.0)
+    static let morphText        = NSColor(calibratedWhite: 0.88, alpha: 1.0)
+    static let morphInputFont   = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
 
     // Tool tag pill colors (per tool type)
     static let toolTagColors: [String: NSColor] = [
@@ -250,6 +258,13 @@ enum Layout {
     static let gistUrlTruncLength = 57
     static let writePreviewLines = 50
 
+    // Text-input morph
+    static let morphTextPaddingLeft: CGFloat = 12
+    static let morphSendWidth: CGFloat = 62
+    static let morphSendHeight: CGFloat = 24
+    static let morphSendCornerRadius: CGFloat = 6
+    static let morphSendMargin: CGFloat = 5
+
     /// Spacing breakdown for fixed chrome (everything except code block and buttons).
     static let fixedChrome: CGFloat = panelTopPadding + projectHeight + pathHeight
         + sectionGap + separatorHeight + sectionGap + tagButtonHeight + codeBlockGap
@@ -314,6 +329,69 @@ func checkAlwaysApprove(input: HookInput) -> Bool {
         reason: "Auto-approved (\(input.toolName) in auto-approve.json)"
     )
     return true
+}
+
+/// Checks if the tool matches a project-level allow rule in `.claude/settings.local.json`.
+///
+/// Rules use glob matching: `Bash(echo *)` matches any command starting with `echo`.
+///
+/// - Parameter input: The parsed hook input.
+/// - Returns: `true` if a matching rule was found (response already written), `false` otherwise.
+func checkProjectSettings(input: HookInput) -> Bool {
+    let settingsPath = input.cwd + "/.claude/settings.local.json"
+    guard let data = FileManager.default.contents(atPath: settingsPath),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let perms = json["permissions"] as? [String: Any],
+          let allow = perms["allow"] as? [String] else {
+        return false
+    }
+
+    let toolName = input.toolName
+    let cmd = input.toolInput["command"] as? String ?? ""
+    let url = input.toolInput["url"] as? String ?? ""
+
+    for rule in allow {
+        // Exact tool match (e.g., "WebSearch", "Read")
+        if rule == toolName {
+            writeHookResponse(decision: "allow", reason: "Allowed by project rule: \(rule)")
+            return true
+        }
+        // Pattern match: ToolName(pattern) where pattern uses glob-style *
+        if rule.hasPrefix("\(toolName)(") && rule.hasSuffix(")") {
+            let start = rule.index(rule.startIndex, offsetBy: toolName.count + 1)
+            let end = rule.index(before: rule.endIndex)
+            let pattern = String(rule[start..<end])
+
+            let valueToMatch: String
+            if toolName == "Bash" {
+                valueToMatch = cmd
+            } else if toolName == "WebFetch" && pattern.hasPrefix("domain:") {
+                valueToMatch = "domain:" + (URL(string: url)?.host ?? url)
+            } else {
+                valueToMatch = cmd
+            }
+
+            if globMatch(pattern: pattern, value: valueToMatch) {
+                writeHookResponse(decision: "allow", reason: "Allowed by project rule: \(rule)")
+                return true
+            }
+        }
+    }
+    return false
+}
+
+/// Simple glob matcher — supports `*` as a wildcard for any sequence of characters.
+private func globMatch(pattern: String, value: String) -> Bool {
+    if pattern == "*" { return true }
+    if pattern.hasSuffix(" *") {
+        let prefix = String(pattern.dropLast(2))
+        return value == prefix || value.hasPrefix(prefix + " ") || value.hasPrefix(prefix + "\t")
+    }
+    if pattern.hasSuffix("*") {
+        let prefix = String(pattern.dropLast())
+        return value.hasPrefix(prefix)
+    }
+    return pattern == value
 }
 
 /// Appends a tool name to the session auto-approve file.
@@ -1013,14 +1091,14 @@ func buildPermOptions(input: HookInput) -> [PermOption] {
                 resultKey: "dont_ask_bash",
                 color: Theme.buttonPersist
             ),
-            PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny),
+            PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny, textInput: true, placeholder: "Tell Claude what to do differently"),
         ]
 
     case "Edit", "Write":
         return [
             PermOption(label: "Yes", resultKey: "allow_once", color: Theme.buttonAllow),
             PermOption(label: "Yes, allow all edits during this session", resultKey: "allow_edits_session", color: Theme.buttonPersist),
-            PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny),
+            PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny, textInput: true, placeholder: "Tell Claude what to do differently"),
         ]
 
     case "WebFetch":
@@ -1029,14 +1107,14 @@ func buildPermOptions(input: HookInput) -> [PermOption] {
         return [
             PermOption(label: "Yes", resultKey: "allow_once", color: Theme.buttonAllow),
             PermOption(label: "Yes, and don't ask again for \(domain)", resultKey: "dont_ask_domain", color: Theme.buttonPersist),
-            PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny),
+            PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny, textInput: true, placeholder: "Tell Claude what to do differently"),
         ]
 
     case "WebSearch":
         return [
             PermOption(label: "Yes", resultKey: "allow_once", color: Theme.buttonAllow),
             PermOption(label: "Yes, and don't ask again for WebSearch", resultKey: "dont_ask_tool", color: Theme.buttonPersist),
-            PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny),
+            PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny, textInput: true, placeholder: "Tell Claude what to do differently"),
         ]
 
     case "AskUserQuestion":
@@ -1054,13 +1132,13 @@ func buildPermOptions(input: HookInput) -> [PermOption] {
                     resultKey: "dont_ask_mcp_server",
                     color: Theme.buttonPersist
                 ),
-                PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny),
+                PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny, textInput: true, placeholder: "Tell Claude what to do differently"),
             ]
         }
         return [
             PermOption(label: "Yes", resultKey: "allow_once", color: Theme.buttonAllow),
             PermOption(label: "Yes, during this session", resultKey: "allow_session", color: Theme.buttonPersist),
-            PermOption(label: "No, and tell Claude what to do differently", resultKey: "deny", color: Theme.buttonDeny),
+            PermOption(label: "No", resultKey: "deny", color: Theme.buttonDeny),
         ]
     }
 }
@@ -1630,29 +1708,163 @@ private func notifyNextSiblingDialog() {
 
 // MARK: - Button Handler
 
-/// Manages button press state and dialog dismissal for the permission dialog.
+/// Manages button press state, text input morphing, and dialog dismissal.
 ///
 /// Tracks which option the user selected via `result`, prevents double-press via `pressing`,
 /// and drives both click and keyboard-shortcut code paths through `animatePress(index:)`.
-private final class ButtonHandler: NSObject {
+/// When the deny button (with `textInput`) is clicked, it morphs into an inline text field.
+final class ButtonHandler: NSObject, NSTextFieldDelegate {
     let options: [PermOption]
     /// The `resultKey` of the selected `PermOption`. Defaults to `"deny"` (safe fallback).
     var result: String = "deny"
+    /// User-typed feedback text from the deny text field (empty if none typed).
+    var feedbackText: String = ""
     var buttons: [NSButton] = []
     private var pressing = false
+    var textInputActive = false
+    private var activeTextField: NSTextField?
 
     init(options: [PermOption]) {
         self.options = options
     }
 
     /// Visually depresses the button at `index`, records `result`, then stops the modal.
-    ///
-    /// Uses `CATransaction` to force an immediate layer flush so the pressed state renders
-    /// reliably even on panels that were backgrounded at launch. Safe to call from both
-    /// keyboard and mouse handlers — the `pressing` guard prevents double-firing.
-    ///
-    /// - Parameter index: Zero-based index into `options` and `buttons`.
+    /// If the option has `textInput`, morphs the button into a text field instead.
     func animatePress(index: Int) {
+        guard !pressing, index >= 0, index < buttons.count else { return }
+        let option = options[index]
+
+        if option.textInput && !textInputActive {
+            textInputActive = true
+            morphToTextField(index: index)
+            return
+        }
+
+        pressing = true
+        let button = buttons[index]
+        result = option.resultKey
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        button.layer?.backgroundColor = option.color.withAlphaComponent(Theme.buttonPressAlpha).cgColor
+        CATransaction.commit()
+        CATransaction.flush()
+        button.display()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) {
+            NSApp.stopModal()
+        }
+    }
+
+    /// Morphs the deny button into a text field + Send button.
+    private func morphToTextField(index: Int) {
+        let button = buttons[index]
+        let option = options[index]
+        guard let superview = button.superview else { return }
+
+        let frame = button.frame
+        let tint = option.color
+
+        // Container — same frame/corners, soothing dark background + color-matched border
+        let container = NSView(frame: frame)
+        container.wantsLayer = true
+        container.layer?.cornerRadius = Layout.buttonCornerRadius
+        container.layer?.backgroundColor = Theme.morphInputBg.cgColor
+        container.layer?.borderColor = tint.withAlphaComponent(0.45).cgColor
+        container.layer?.borderWidth = 1
+        container.alphaValue = 0
+        superview.addSubview(container)
+
+        // Send button
+        let sendW = Layout.morphSendWidth
+        let sendH = Layout.morphSendHeight
+        let sendMargin = Layout.morphSendMargin
+        let sendBtn = NSButton(frame: NSRect(
+            x: frame.width - sendW - sendMargin,
+            y: (frame.height - sendH) / 2,
+            width: sendW, height: sendH
+        ))
+        sendBtn.title = "Send ⏎"
+        sendBtn.alignment = .center
+        sendBtn.bezelStyle = .rounded
+        sendBtn.isBordered = false
+        sendBtn.wantsLayer = true
+        sendBtn.layer?.cornerRadius = Layout.morphSendCornerRadius
+        sendBtn.layer?.backgroundColor = tint.withAlphaComponent(0.55).cgColor
+        sendBtn.contentTintColor = NSColor(calibratedWhite: 0.95, alpha: 1.0)
+        sendBtn.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        sendBtn.tag = index
+        sendBtn.target = self
+        sendBtn.action = #selector(ButtonHandler.sendClicked(_:))
+        container.addSubview(sendBtn)
+
+        // Text field — vertically centered using font metrics
+        let leftPad = Layout.morphTextPaddingLeft
+        let rightPad = sendW + sendMargin * 2
+        let lineHeight = ceil(Theme.morphInputFont.ascender - Theme.morphInputFont.descender + Theme.morphInputFont.leading)
+        let tfHeight = lineHeight + 4
+        let tf = NSTextField(frame: NSRect(
+            x: leftPad, y: (frame.height - tfHeight) / 2 - 1,
+            width: frame.width - leftPad - rightPad, height: tfHeight
+        ))
+        tf.placeholderAttributedString = NSAttributedString(
+            string: option.placeholder,
+            attributes: [
+                .foregroundColor: Theme.morphPlaceholder,
+                .font: Theme.morphInputFont,
+            ]
+        )
+        tf.stringValue = ""
+        tf.alignment = .left
+        tf.font = Theme.morphInputFont
+        tf.textColor = Theme.morphText
+        tf.backgroundColor = .clear
+        tf.drawsBackground = false
+        tf.isBordered = false
+        tf.isEditable = true
+        tf.focusRingType = .none
+        tf.delegate = self
+        tf.tag = index
+        container.addSubview(tf)
+        activeTextField = tf
+
+        // Animate: button fades out, container fades in
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.2
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            button.animator().alphaValue = 0
+            container.animator().alphaValue = 1
+        }, completionHandler: {
+            button.isHidden = true
+            superview.window?.makeFirstResponder(tf)
+        })
+    }
+
+    private func submitTextInput(index: Int) {
+        guard index >= 0, index < options.count else { return }
+        pressing = true
+        result = options[index].resultKey
+        feedbackText = activeTextField?.stringValue ?? ""
+        NSApp.stopModal()
+    }
+
+    @objc func sendClicked(_ sender: NSButton) { submitTextInput(index: sender.tag) }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            submitTextInput(index: control.tag)
+            return true
+        }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            pressing = true
+            result = options[control.tag].resultKey
+            feedbackText = ""
+            NSApp.stopModal()
+            return true
+        }
+        return false
+    }
+
+    /// Direct press — skips textInput morph. Used by Enter/Esc keyboard shortcuts.
+    func directPress(index: Int) {
         guard !pressing, index >= 0, index < buttons.count else { return }
         pressing = true
         let button = buttons[index]
@@ -1904,7 +2116,7 @@ private func addButtonRows(to contentView: NSView, panel: NSPanel, options: [Per
             contentView.addSubview(button)
             handler.buttons.append(button)
 
-            if optionIndex == 0 {
+            if optionIndex == 0 && !option.textInput {
                 panel.defaultButtonCell = button.cell as? NSButtonCell
             }
         }
@@ -1930,7 +2142,7 @@ private func addButtonRows(to contentView: NSView, panel: NSPanel, options: [Per
 ///   - gist: A short summary string shown next to the tool tag pill.
 ///   - buttonRows: Pre-computed row layout (indices into `options`).
 ///   - optionsHeight: Pre-computed total height for the button area.
-/// - Returns: The `resultKey` of the selected `PermOption`, or `"deny"` on timeout/escape.
+/// - Returns: The `ButtonHandler` containing the selected result and any typed feedback.
 private func showPermissionDialog(
     input: HookInput,
     options: [PermOption],
@@ -1938,7 +2150,7 @@ private func showPermissionDialog(
     gist: String,
     buttonRows: [[Int]],
     optionsHeight: CGFloat
-) -> String {
+) -> ButtonHandler {
     // Calculate code block height
     let screenHeight     = NSScreen.main?.visibleFrame.height ?? Layout.fallbackScreenHeight
     let maxContentHeight = min(Layout.maxCodeBlockHeight, screenHeight * Layout.maxScreenFraction)
@@ -1970,13 +2182,15 @@ private func showPermissionDialog(
                   buttonRows: buttonRows, handler: handler, codeBlockBottom: codeBlockBottom)
 
     // Keyboard shortcuts: 1–N select options, Enter accepts, Esc rejects
+    // When text input is active, let the text field handle all keys.
     let keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        if handler.textInputActive { return event }
         let key = event.charactersIgnoringModifiers ?? ""
         if let num = Int(key), num >= 1, num <= options.count {
             handler.animatePress(index: num - 1); return nil
         }
-        if key == "\r"     { handler.animatePress(index: 0);               return nil }
-        if key == "\u{1b}" { handler.animatePress(index: options.count - 1); return nil }
+        if key == "\r"     { handler.directPress(index: 0);                return nil }
+        if key == "\u{1b}" { handler.directPress(index: options.count - 1); return nil }
         return event
     }
 
@@ -2009,7 +2223,7 @@ private func showPermissionDialog(
     activatePanel(panel)
     NSApp.runModal(for: panel)
 
-    return handler.result
+    return handler
 }
 
 // MARK: - Result Processing
@@ -2019,10 +2233,11 @@ private func showPermissionDialog(
 /// Handles session-level and project-level persistence based on the selected option.
 ///
 /// - Parameters:
-///   - resultKey: The `resultKey` from the selected `PermOption`.
+///   - handler: The `ButtonHandler` containing the selected result and feedback text.
 ///   - input: The parsed hook input for persistence (session file, project settings).
 /// - Returns: A tuple of the hook decision (`"allow"` or `"deny"`) and a reason string.
-func processResult(resultKey: String, input: HookInput) -> (decision: String, reason: String) {
+func processResult(handler: ButtonHandler, input: HookInput) -> (decision: String, reason: String) {
+    let resultKey = handler.result
     switch resultKey {
     case "allow_once":
         return ("allow", "Allowed once via dialog")
@@ -2062,6 +2277,10 @@ func processResult(resultKey: String, input: HookInput) -> (decision: String, re
     case "allow_goto_terminal":
         openTerminalApp(cwd: input.cwd, sessionId: input.sessionId)
         return ("allow", "Allowed — terminal activated for user input")
+
+    case "deny":
+        let reason = handler.feedbackText.isEmpty ? "Rejected via dialog" : handler.feedbackText
+        return ("deny", reason)
 
     default:
         return ("deny", "Rejected via dialog")
@@ -2121,6 +2340,11 @@ private func approveMain() {
         exit(0)
     }
 
+    // Fast path: skip dialog if tool matches a project-level allow rule
+    if checkProjectSettings(input: input) {
+        exit(0)
+    }
+
     // Fast path: skip dialog if tool is already approved for this session
     if checkSessionAutoApprove(input: input) {
         exit(0)
@@ -2147,7 +2371,7 @@ private func approveMain() {
     let (buttonRows, optionsHeight) = computeButtonRows(options: permOptions)
 
     // Show dialog and get user's choice
-    let resultKey = showPermissionDialog(
+    let handler = showPermissionDialog(
         input: input,
         options: permOptions,
         content: contentAttr,
@@ -2157,7 +2381,7 @@ private func approveMain() {
     )
 
     // Process result: persist approvals and write response immediately
-    let (decision, reason) = processResult(resultKey: resultKey, input: input)
+    let (decision, reason) = processResult(handler: handler, input: input)
     writeHookResponse(decision: decision, reason: reason)
 
     // Signal next sibling AFTER response is delivered to Claude Code
