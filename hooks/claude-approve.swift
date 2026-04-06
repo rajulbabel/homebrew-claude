@@ -320,15 +320,21 @@ func checkSessionAutoApprove(input: HookInput) -> Bool {
 /// - Returns: `true` if the tool was auto-approved (response already written), `false` otherwise.
 func checkAlwaysApprove(input: HookInput) -> Bool {
     guard let data = FileManager.default.contents(atPath: HookInput.autoApprovePath),
-          let tools = try? JSONSerialization.jsonObject(with: data) as? [String],
-          tools.contains(input.toolName) else {
+          let tools = try? JSONSerialization.jsonObject(with: data) as? [String] else {
         return false
     }
-    writeHookResponse(
-        decision: "allow",
-        reason: "Auto-approved (\(input.toolName) in auto-approve.json)"
-    )
-    return true
+    for rule in tools {
+        if rule == input.toolName {
+            writeHookResponse(decision: "allow", reason: "Auto-approved (\(rule) in auto-approve.json)")
+            return true
+        }
+        // Bare suffix-glob match (e.g., "mcp__Claude__*")
+        if rule.hasSuffix("*") && globMatch(pattern: rule, value: input.toolName) {
+            writeHookResponse(decision: "allow", reason: "Auto-approved (\(rule) in auto-approve.json)")
+            return true
+        }
+    }
+    return false
 }
 
 /// Checks if the tool matches a project-level allow rule in `.claude/settings.local.json`.
@@ -338,13 +344,8 @@ func checkAlwaysApprove(input: HookInput) -> Bool {
 /// - Parameter input: The parsed hook input.
 /// - Returns: `true` if a matching rule was found (response already written), `false` otherwise.
 func checkProjectSettings(input: HookInput) -> Bool {
-    let settingsPath = input.cwd + "/.claude/settings.local.json"
-    guard let data = FileManager.default.contents(atPath: settingsPath),
-          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let perms = json["permissions"] as? [String: Any],
-          let allow = perms["allow"] as? [String] else {
-        return false
-    }
+    let allow = loadProjectAllowRules(cwd: input.cwd)
+    if allow.isEmpty { return false }
 
     let toolName = input.toolName
     let cmd = input.toolInput["command"] as? String ?? ""
@@ -355,6 +356,13 @@ func checkProjectSettings(input: HookInput) -> Bool {
         if rule == toolName {
             writeHookResponse(decision: "allow", reason: "Allowed by project rule: \(rule)")
             return true
+        }
+        // Bare suffix-glob match (e.g., "mcp__Claude__*" matches "mcp__Claude__preview_resize")
+        if rule.hasSuffix("*") && !rule.contains("(") {
+            if globMatch(pattern: rule, value: toolName) {
+                writeHookResponse(decision: "allow", reason: "Allowed by project rule: \(rule)")
+                return true
+            }
         }
         // Pattern match: ToolName(pattern) where pattern uses glob-style *
         if rule.hasPrefix("\(toolName)(") && rule.hasSuffix(")") {
@@ -378,6 +386,25 @@ func checkProjectSettings(input: HookInput) -> Bool {
         }
     }
     return false
+}
+
+/// Loads the merged `permissions.allow` arrays from both `.claude/settings.json`
+/// and `.claude/settings.local.json` in the project directory.
+///
+/// - Parameter cwd: The project working directory.
+/// - Returns: A combined array of allow rule strings (duplicates preserved — matching stops at first hit).
+private func loadProjectAllowRules(cwd: String) -> [String] {
+    var allRules: [String] = []
+    for filename in ["settings.json", "settings.local.json"] {
+        let path = cwd + "/.claude/" + filename
+        if let data = FileManager.default.contents(atPath: path),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let perms = json["permissions"] as? [String: Any],
+           let allow = perms["allow"] as? [String] {
+            allRules.append(contentsOf: allow)
+        }
+    }
+    return allRules
 }
 
 /// Simple glob matcher — supports `*` as a wildcard for any sequence of characters.
