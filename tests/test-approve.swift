@@ -1242,6 +1242,69 @@ func testMCPProcessResult() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MARK: - tmux Client Resolution Tests
+// ═══════════════════════════════════════════════════════════════════
+
+func testParseTmuxClientOutput() {
+    test("parseTmuxClientOutput: valid pid and /dev/ tty") {
+        let result = parseTmuxClientOutput("12345 /dev/ttys001")
+        assertEq(result?.pid, 12345)
+        assertEq(result?.tty, "s001")
+    }
+
+    test("parseTmuxClientOutput: pid only, no tty field") {
+        let result = parseTmuxClientOutput("12345")
+        assertEq(result?.pid, 12345)
+        assertTrue(result?.tty == nil, "tty should be nil when only pid present")
+    }
+
+    test("parseTmuxClientOutput: empty string returns nil") {
+        let result = parseTmuxClientOutput("")
+        assertTrue(result == nil, "should return nil for empty input")
+    }
+
+    test("parseTmuxClientOutput: whitespace-only returns nil") {
+        let result = parseTmuxClientOutput("   \n  ")
+        assertTrue(result == nil, "should return nil for whitespace-only input")
+    }
+
+    test("parseTmuxClientOutput: non-numeric pid returns nil") {
+        let result = parseTmuxClientOutput("abc /dev/ttys001")
+        assertTrue(result == nil, "should return nil for non-numeric pid")
+    }
+
+    test("parseTmuxClientOutput: tty without /dev/ prefix") {
+        let result = parseTmuxClientOutput("99999 ttys003")
+        assertEq(result?.pid, 99999)
+        assertEq(result?.tty, "s003")
+    }
+
+    test("parseTmuxClientOutput: trailing newline stripped") {
+        let result = parseTmuxClientOutput("12345 /dev/ttys007\n")
+        assertEq(result?.pid, 12345)
+        assertEq(result?.tty, "s007")
+    }
+
+    test("parseTmuxClientOutput: extra whitespace trimmed") {
+        let result = parseTmuxClientOutput("  42  /dev/ttys010  \n")
+        assertEq(result?.pid, 42)
+        assertEq(result?.tty, "s010")
+    }
+
+    test("parseTmuxClientOutput: bare /dev/tty with no suffix yields nil tty") {
+        let result = parseTmuxClientOutput("12345 /dev/tty")
+        assertEq(result?.pid, 12345)
+        assertTrue(result?.tty == nil, "bare /dev/tty should yield nil tty")
+    }
+
+    test("parseTmuxClientOutput: raw short tty like s015") {
+        let result = parseTmuxClientOutput("500 s015")
+        assertEq(result?.pid, 500)
+        assertEq(result?.tty, "s015")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MARK: - Main Entry Point
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1274,6 +1337,7 @@ enum ApproveTests {
         testMCPBuildContent()
         testMCPBuildPermOptions()
         testMCPProcessResult()
+        testParseTmuxClientOutput()
 
         exit(printSummary())
     }

@@ -633,6 +633,15 @@ private func focusWarpTab(bundleId: String, tty: String?) -> Bool {
     return result == "found"
 }
 
+/// Runs a cmux CLI command, discarding output.
+private func runCmuxCmd(_ cli: String, _ args: [String]) {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: cli)
+    p.arguments = args
+    p.standardOutput = Pipe(); p.standardError = Pipe()
+    try? p.run(); p.waitUntilExit()
+}
+
 /// Transfers activation from this hook to the target running application.
 ///
 /// Uses two complementary strategies:
@@ -775,6 +784,27 @@ private func openTerminalApp(cwd: String, sessionId: String = "") {
         Thread.sleep(forTimeInterval: 0.15)
         let toolRoles: Set<String> = ["AXButton", "AXRadioButton", "AXTab", "AXCheckBox", "AXStaticText"]
         focusAXDescendant(app: app, matching: "Terminal", roles: toolRoles)
+
+    case "com.cmuxterm.app":
+        // cmux: pre-focus via CLI to prevent duplicate windows, activate to
+        // bring to front, then select the Claude workspace.
+        let cmuxCLI = "/Applications/cmux.app/Contents/Resources/bin/cmux"
+        let cmuxEnv = ProcessInfo.processInfo.environment
+        if let wsId = cmuxEnv["CMUX_WORKSPACE_ID"] {
+            runCmuxCmd(cmuxCLI, ["select-workspace", "--workspace", wsId])
+        }
+        runAppleScript("""
+        tell application id "\(bundleId)"
+            activate
+        end tell
+        """)
+        Thread.sleep(forTimeInterval: 0.15)
+        if let wsId = cmuxEnv["CMUX_WORKSPACE_ID"] {
+            runCmuxCmd(cmuxCLI, ["select-workspace", "--workspace", wsId])
+        }
+        if let surfId = cmuxEnv["CMUX_SURFACE_ID"] {
+            runCmuxCmd(cmuxCLI, ["focus-panel", "--panel", surfId])
+        }
 
     case "com.anthropic.claudefordesktop":
         // Claude desktop is Electron with a separate Code BrowserWindow.

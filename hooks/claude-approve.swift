@@ -1300,7 +1300,75 @@ private func resolveProcessAncestry() -> (tty: String?, app: NSRunningApplicatio
         if foundTTY != nil && foundApp != nil { break }
     }
 
+    // If inside tmux, the TTY from the walk is a tmux-internal pts and the
+    // walk may have dead-ended at launchd without finding a GUI app.  Ask tmux
+    // for the *client* PID/TTY so we can resolve the real hosting terminal.
+    if ProcessInfo.processInfo.environment["TMUX"] != nil,
+       let parsed = queryTmuxClient() {
+        // Always prefer the client TTY (terminal's actual TTY) over tmux pts.
+        if let t = parsed.tty { foundTTY = t }
+        // If no GUI app found via normal walk, walk from the client PID.
+        if foundApp == nil {
+            var pid = parsed.pid
+            for _ in 0..<15 {
+                if let app = NSRunningApplication(processIdentifier: pid),
+                   app.activationPolicy == .regular {
+                    foundApp = app
+                    break
+                }
+                guard let ppid = ppidMap[pid], ppid > 1 else { break }
+                pid = ppid
+            }
+        }
+    }
+
     return (foundTTY, foundApp)
+}
+
+/// Parses the output of `tmux display-message -p '#{client_pid} #{client_tty}'`.
+///
+/// Extracts the client PID and normalizes the TTY from `/dev/ttysXXX` (or
+/// `ttysXXX`) to the short `sXXX` format used by `ps -o tty=`.
+///
+/// - Parameter output: Raw stdout from the tmux command.
+/// - Returns: A tuple of (client PID, normalized TTY) or `nil` if parsing fails.
+func parseTmuxClientOutput(_ output: String) -> (pid: pid_t, tty: String?)? {
+    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    let parts = trimmed.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+    guard let pid = pid_t(parts[0]) else { return nil }
+
+    var tty: String? = nil
+    if parts.count > 1 {
+        var raw = String(parts[1]).trimmingCharacters(in: .whitespaces)
+        if raw.hasPrefix("/dev/tty") {
+            raw = String(raw.dropFirst("/dev/tty".count))
+        } else if raw.hasPrefix("tty") {
+            raw = String(raw.dropFirst("tty".count))
+        }
+        tty = raw.isEmpty ? nil : raw
+    }
+
+    return (pid, tty)
+}
+
+/// Queries tmux for the current client's PID and TTY.
+///
+/// Uses `tmux display-message` to retrieve the attached client's process ID
+/// and controlling TTY.  Returns `nil` if tmux is not available or the
+/// command fails (e.g. when not running inside tmux).
+private func queryTmuxClient() -> (pid: pid_t, tty: String?)? {
+    let pipe = Pipe()
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    p.arguments = ["tmux", "display-message", "-p", "#{client_pid} #{client_tty}"]
+    p.standardOutput = pipe
+    p.standardError = Pipe()
+    try? p.run()
+    p.waitUntilExit()
+    guard p.terminationStatus == 0 else { return nil }
+    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    return parseTmuxClientOutput(output)
 }
 
 /// Executes an AppleScript source string, ignoring errors.
@@ -1571,6 +1639,15 @@ private func searchAXTree(element: AXUIElement, needle: String, roles: Set<Strin
     return false
 }
 
+/// Runs a cmux CLI command, discarding output.
+private func runCmuxCmd(_ cli: String, _ args: [String]) {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: cli)
+    p.arguments = args
+    p.standardOutput = Pipe(); p.standardError = Pipe()
+    try? p.run(); p.waitUntilExit()
+}
+
 /// Transfers activation from this hook to the target running application.
 ///
 /// Uses two complementary strategies:
@@ -1657,6 +1734,34 @@ private func openTerminalApp(cwd: String, sessionId: String = "") {
         Thread.sleep(forTimeInterval: 0.15)
         let toolRoles: Set<String> = ["AXButton", "AXRadioButton", "AXTab", "AXCheckBox", "AXStaticText"]
         focusAXDescendant(app: app, matching: "Terminal", roles: toolRoles)
+
+    case "com.cmuxterm.app":
+        // cmux: pre-focus via CLI to prevent duplicate windows, activate to
+        // bring to front, then select the Claude workspace.
+        let cmuxCLI = "/Applications/cmux.app/Contents/Resources/bin/cmux"
+        let cmuxEnv = ProcessInfo.processInfo.environment
+
+        // 1. Pre-select workspace + focus window via CLI (prevents duplicate).
+        if let wsId = cmuxEnv["CMUX_WORKSPACE_ID"] {
+            runCmuxCmd(cmuxCLI, ["select-workspace", "--workspace", wsId])
+        }
+
+        // 2. Activate to bring cmux to front and switch Spaces.
+        runAppleScript("""
+        tell application id "\(bundleId)"
+            activate
+        end tell
+        """)
+
+        // 3. Re-select workspace after activation (brief delay for cmux to
+        //    finish processing the activate event).
+        Thread.sleep(forTimeInterval: 0.15)
+        if let wsId = cmuxEnv["CMUX_WORKSPACE_ID"] {
+            runCmuxCmd(cmuxCLI, ["select-workspace", "--workspace", wsId])
+        }
+        if let surfId = cmuxEnv["CMUX_SURFACE_ID"] {
+            runCmuxCmd(cmuxCLI, ["focus-panel", "--panel", surfId])
+        }
 
     case "com.anthropic.claudefordesktop":
         // Claude desktop is Electron with a separate Code BrowserWindow.
@@ -2439,6 +2544,7 @@ private func approveMain() {
 
     // Signal next sibling AFTER response is delivered to Claude Code
     notifyNextSiblingDialog()
+
     exit(0)
 }
 
