@@ -1419,6 +1419,7 @@ private func warpTabContains(_ needle: String) -> Bool {
 /// Writes a unique plain-text marker to the TTY device, checks if the
 /// current tab already has it (no activation needed for the check), and
 /// if not, activates Warp and cycles tabs in a single AppleScript loop.
+/// The marker is erased via backspace sequences after identification.
 ///
 /// - Parameters:
 ///   - bundleId: Warp's bundle identifier.
@@ -1440,6 +1441,16 @@ private func focusWarpTab(bundleId: String, tty: String?) -> Bool {
     handle.write(data)
     handle.closeFile()
     Thread.sleep(forTimeInterval: 0.2)
+
+    // Erase the marker from the terminal after tab identification.
+    defer {
+        let cleanup = "\r\u{1b}[2K"
+        if let cleanupData = cleanup.data(using: .utf8),
+           let cleanHandle = FileHandle(forWritingAtPath: ttyPath) {
+            cleanHandle.write(cleanupData)
+            cleanHandle.closeFile()
+        }
+    }
 
     // Fast path: if the current tab already has our marker, just activate.
     if warpTabContains(marker) {
