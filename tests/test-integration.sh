@@ -199,6 +199,25 @@ OUTPUT11=$(echo '{"tool_name":"Bash","tool_input":{"command":"echo hi"},"cwd":"/
     | "$APPROVE" 2>/dev/null)
 assert_contains "bypass Bash allow" "$OUTPUT11" '"permissionDecision":"allow"'
 
+# ── 17. Settings files are auto-approved (terminal handles confirmation) ──
+echo "  Running: settings file auto-approved in default mode..."
+OUTPUT12=$(echo '{"tool_name":"Edit","tool_input":{"file_path":"/project/.claude/settings.local.json","old_string":"a","new_string":"b"},"cwd":"/tmp","session_id":""}' \
+    | "$APPROVE" 2>/dev/null)
+assert_contains "settings auto-approve" "$OUTPUT12" '"permissionDecision":"allow"'
+assert_contains "settings reason" "$OUTPUT12" "Claude settings"
+
+# ── 18. Settings files auto-approved even in dontAsk mode ────────────────
+echo "  Running: settings file auto-approved in dontAsk mode..."
+OUTPUT13=$(echo '{"tool_name":"Edit","tool_input":{"file_path":"/project/.claude/settings.json","old_string":"a","new_string":"b"},"cwd":"/tmp","session_id":"","permission_mode":"dontAsk"}' \
+    | "$APPROVE" 2>/dev/null)
+assert_contains "settings dontAsk allow" "$OUTPUT13" '"permissionDecision":"allow"'
+
+# ── 19. Write to settings file also auto-approved ────────────────────────
+echo "  Running: settings Write auto-approved..."
+OUTPUT14=$(echo '{"tool_name":"Write","tool_input":{"file_path":"/project/.claude/settings.local.json","content":"{}"},"cwd":"/tmp","session_id":""}' \
+    | "$APPROVE" 2>/dev/null)
+assert_contains "settings Write allow" "$OUTPUT14" '"permissionDecision":"allow"'
+
 # ── Summary ─────────────────────────────────────────────────────
 echo ""
 TOTAL=$((PASSED + FAILED))

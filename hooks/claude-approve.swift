@@ -78,6 +78,14 @@ struct HookInput {
         isMCP ? mcpServer : toolName
     }
 
+    /// Whether this tool targets a Claude settings file (`.claude/settings*.json`).
+    /// Only true for Edit/Write tools whose `file_path` contains `/.claude/settings`.
+    var isClaudeSettings: Bool {
+        guard toolName == "Edit" || toolName == "Write" else { return false }
+        let filePath = toolInput["file_path"] as? String ?? ""
+        return filePath.contains("/.claude/settings")
+    }
+
     /// Path to the session auto-approve file, or `nil` if `sessionId` is empty.
     ///
     /// Sanitizes the session ID to prevent path traversal — only ASCII
@@ -2335,6 +2343,13 @@ private func approveMain() {
     // Fast path: honor --dangerously-skip-permissions (but not for user-input tools)
     if input.permissionMode == "bypassPermissions" && input.toolName != "AskUserQuestion" {
         writeHookResponse(decision: "allow", reason: "Permissions bypassed (--dangerously-skip-permissions)")
+        exit(0)
+    }
+
+    // Fast path: Claude settings files are auto-approved — Claude Code's own
+    // terminal prompt handles the confirmation for these edits.
+    if input.isClaudeSettings {
+        writeHookResponse(decision: "allow", reason: "Auto-approved (Claude settings — terminal confirms)")
         exit(0)
     }
 

@@ -533,6 +533,37 @@ func testBuildContent() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MARK: - isClaudeSettings Tests (6)
+// ═══════════════════════════════════════════════════════════════════
+
+func testIsClaudeSettings() {
+    test("isClaudeSettings: Edit targeting settings.local.json") {
+        let i = makeInput(tool: "Edit", input: ["file_path": "/project/.claude/settings.local.json"])
+        assertTrue(i.isClaudeSettings)
+    }
+    test("isClaudeSettings: Edit targeting settings.json") {
+        let i = makeInput(tool: "Edit", input: ["file_path": "/project/.claude/settings.json"])
+        assertTrue(i.isClaudeSettings)
+    }
+    test("isClaudeSettings: Write targeting settings.local.json") {
+        let i = makeInput(tool: "Write", input: ["file_path": "/project/.claude/settings.local.json"])
+        assertTrue(i.isClaudeSettings)
+    }
+    test("isClaudeSettings: Edit targeting regular file") {
+        let i = makeInput(tool: "Edit", input: ["file_path": "/project/src/main.swift"])
+        assertFalse(i.isClaudeSettings)
+    }
+    test("isClaudeSettings: Bash tool ignores file_path") {
+        let i = makeInput(tool: "Bash", input: ["command": "cat .claude/settings.json"])
+        assertFalse(i.isClaudeSettings)
+    }
+    test("isClaudeSettings: Edit with no file_path") {
+        let i = makeInput(tool: "Edit", input: [:])
+        assertFalse(i.isClaudeSettings)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MARK: - buildPermOptions Tests (7)
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1227,6 +1258,7 @@ enum ApproveTests {
         testCollapseContext()
         testFindStartLine()
         testBuildContent()
+        testIsClaudeSettings()
         testBuildPermOptions()
         testComputeButtonRows()
         testProcessResult()
