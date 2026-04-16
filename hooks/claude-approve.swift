@@ -2038,6 +2038,26 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate {
 
 // MARK: - Dialog Helpers
 
+/// Installs a minimal Edit menu so clipboard shortcuts (Cmd+C/V/X/A) work in text fields.
+///
+/// Headless `.accessory` apps have no menu bar, so macOS cannot route key equivalents
+/// for Copy, Paste, Cut, and Select All to the focused `NSTextField`. Adding a hidden
+/// Edit menu lets AppKit handle them automatically.
+private func installEditMenu() {
+    let editMenu = NSMenu(title: "Edit")
+    editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+
+    let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+    editItem.submenu = editMenu
+
+    let mainMenu = NSMenu(title: "Main")
+    mainMenu.addItem(editItem)
+    NSApp.mainMenu = mainMenu
+}
+
 /// Creates and positions the floating `NSPanel` for the permission dialog.
 ///
 /// - Parameter height: Total panel height in points.
@@ -2520,6 +2540,7 @@ private func approveMain() {
     // Initialize headless NSApplication (no Dock icon)
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
+    installEditMenu()
     NSSound(named: "Funk")?.play()
 
     // Build dialog data
