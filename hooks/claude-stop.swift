@@ -1024,10 +1024,11 @@ private func addStopHeader(to contentView: NSView, input: StopInput, panelHeight
     contentView.addSubview(pathLabel)
 
     y -= Layout.sectionGap
-    let separator = NSBox(frame: NSRect(x: Layout.panelInset, y: y,
-                                        width: Layout.panelWidth - Layout.panelInset * 2,
-                                        height: Layout.separatorHeight))
-    separator.boxType = .separator
+    let separator = NSView(frame: NSRect(x: Layout.panelInset, y: y,
+                                         width: Layout.panelWidth - Layout.panelInset * 2,
+                                         height: Layout.separatorHeight))
+    separator.wantsLayer = true
+    separator.layer?.backgroundColor = Theme.stopSeparatorColor.cgColor
     contentView.addSubview(separator)
 
     return y
@@ -1116,10 +1117,10 @@ private func addStopCodeBlock(to contentView: NSView, content: NSAttributedStrin
                                               width: Layout.panelWidth - Layout.panelInset * 2,
                                               height: blockHeight))
     codeContainer.wantsLayer = true
-    codeContainer.layer?.backgroundColor = Theme.codeBackground.cgColor
-    codeContainer.layer?.cornerRadius = Layout.codeCornerRadius
-    codeContainer.layer?.borderWidth = Layout.codeBorderWidth
-    codeContainer.layer?.borderColor = Theme.border.cgColor
+    codeContainer.layer?.cornerRadius = Layout.stopButtonCornerRadius
+    codeContainer.layer?.backgroundColor = Theme.stopRowBg.cgColor
+    codeContainer.layer?.borderColor = Theme.stopRowBorder.cgColor
+    codeContainer.layer?.borderWidth = 1
     contentView.addSubview(codeContainer)
 
     let scrollView = NSScrollView(frame: NSRect(
