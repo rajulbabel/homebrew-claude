@@ -110,6 +110,33 @@ struct PermOption {
     var placeholder: String = ""
 }
 
+/// A single question inside an `AskUserQuestion` tool invocation.
+///
+/// Mirrors the JSON shape Claude Code sends: `header` is the short category tag
+/// (uppercased for the pill), `question` is the prompt text, `options` is the
+/// list of preset answers the user can pick from. The wizard automatically
+/// appends an "Other" row after these options for free-text answers.
+struct WizardQuestion {
+    let header: String
+    let question: String
+    let options: [WizardOption]
+}
+
+/// A preset option inside a `WizardQuestion`.
+struct WizardOption {
+    let label: String
+    let description: String
+}
+
+/// The user's answer to a single `WizardQuestion`.
+///
+/// - `preset(index:)`: user picked the option at that index in `question.options`.
+/// - `custom(text:)`: user typed a free-text answer in the "Other" row.
+enum WizardAnswer: Equatable {
+    case preset(index: Int)
+    case custom(text: String)
+}
+
 /// Represents a single operation in a unified diff.
 enum DiffOp: Equatable {
     case context(String)

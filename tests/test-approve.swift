@@ -1305,12 +1305,49 @@ func testParseTmuxClientOutput() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MARK: - Wizard Types Tests (4)
+// ═══════════════════════════════════════════════════════════════════
+
+func testWizardTypes() {
+    test("WizardQuestion: fields populated") {
+        let q = WizardQuestion(
+            header: "DB",
+            question: "Which database?",
+            options: [
+                WizardOption(label: "Postgres", description: "SQL"),
+                WizardOption(label: "SQLite",   description: "Embedded"),
+            ]
+        )
+        assertEq(q.header, "DB")
+        assertEq(q.question, "Which database?")
+        assertEq(q.options.count, 2)
+        assertEq(q.options[0].label, "Postgres")
+        assertEq(q.options[1].description, "Embedded")
+    }
+    test("WizardOption: empty description allowed") {
+        let opt = WizardOption(label: "Yes", description: "")
+        assertEq(opt.label, "Yes")
+        assertEq(opt.description, "")
+    }
+    test("WizardAnswer.preset equality") {
+        assertTrue(WizardAnswer.preset(index: 1) == WizardAnswer.preset(index: 1))
+        assertFalse(WizardAnswer.preset(index: 1) == WizardAnswer.preset(index: 2))
+    }
+    test("WizardAnswer.custom equality") {
+        assertTrue(WizardAnswer.custom(text: "hello") == WizardAnswer.custom(text: "hello"))
+        assertFalse(WizardAnswer.custom(text: "hello") == WizardAnswer.custom(text: "world"))
+        assertFalse(WizardAnswer.custom(text: "x") == WizardAnswer.preset(index: 0))
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MARK: - Main Entry Point
 // ═══════════════════════════════════════════════════════════════════
 
 @main
 enum ApproveTests {
     static func main() {
+        testWizardTypes()
         testBuildGist()
         testLastComponent()
         testSummarizeBashCommand()
