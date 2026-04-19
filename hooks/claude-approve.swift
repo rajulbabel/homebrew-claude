@@ -223,6 +223,12 @@ enum Theme {
     static let wizardButtonDisabledBorder  = NSColor(calibratedWhite: 1.0, alpha: 0.12)
     static let wizardButtonDisabledText    = NSColor(calibratedWhite: 0.45, alpha: 1.0)
 
+    // Wizard — neutral button
+    /// Neutral (non-accented) button fill/border — used for Back and Ok, which
+    /// must be visually distinct from the blue primary button on the same row.
+    static let wizardNeutralFillRest   = NSColor(calibratedWhite: 1.0, alpha: 0.06)
+    static let wizardNeutralBorderRest = NSColor(calibratedWhite: 1.0, alpha: 0.18)
+
     // Wizard — option row. Selected tints derive from `buttonAllow` so the
     // radio/card highlight stays in sync if the allow green is ever retuned.
     static let wizardRowBg                 = NSColor(calibratedWhite: 1.0, alpha: 0.03)
@@ -402,6 +408,12 @@ enum Layout {
     static let wizardFooterGap: CGFloat = 8
     static let wizardFooterButtonHeight: CGFloat = 36
     static let wizardFooterSideButtonWidth: CGFloat = 82
+    /// Footer inner rows (2 stacked rows of 2 buttons each in the new layout).
+    static let wizardFooterRowGap: CGFloat = 6
+    /// Total footer height = 2 rows × buttonHeight + rowGap + top/bottom padding.
+    /// Replaces the single-row footer height used previously.
+    static let wizardFooterTwoRowHeight: CGFloat =
+        wizardFooterButtonHeight * 2 + wizardFooterRowGap + 10 * 2
 
     // Wizard — Other row text area
     static let wizardOtherMinHeight: CGFloat = 20
@@ -3176,7 +3188,7 @@ func buildWizardQuestionPanel(
     let progressAreaHeight: CGFloat = Layout.wizardProgressTopPadding +
         Layout.wizardProgressDotHeight
     let bodyHeight = rowTopY + totalRowsHeight + progressAreaHeight + Layout.wizardBodyBottomPadding
-    body.frame = NSRect(x: 0, y: Layout.wizardFooterHeight, width: width, height: bodyHeight)
+    body.frame = NSRect(x: 0, y: Layout.wizardFooterTwoRowHeight, width: width, height: bodyHeight)
 
     // Flip y (AppKit origin bottom-left)
     pill.frame.origin.y = bodyHeight - pillTopY - Layout.wizardPillHeight
@@ -3203,61 +3215,67 @@ func buildWizardQuestionPanel(
 
     root.addSubview(body)
 
-    // --- Footer ---
-    let footer = NSView(frame: NSRect(x: 0, y: 0, width: width, height: Layout.wizardFooterHeight))
+    // --- Footer (two rows) ---
+    let footer = NSView(frame: NSRect(x: 0, y: 0, width: width,
+                                      height: Layout.wizardFooterTwoRowHeight))
     footer.wantsLayer = true
     footer.layer?.backgroundColor = Theme.codeBackground.cgColor
 
-    let back = makeWizardFooterButton(title: WizardLabels.back,
-        fill: Theme.buttonPersist.withAlphaComponent(0.06),
-        border: Theme.buttonPersist.withAlphaComponent(0.12),
+    // Row 1: Back + Primary (Next / Submit answers)
+    let back = makeWizardFooterButton(
+        title: WizardLabels.back,
+        fill:  Theme.wizardNeutralFillRest,
+        border: Theme.wizardNeutralBorderRest,
         textColor: Theme.textPrimary)
-    back.frame = NSRect(x: Layout.wizardBodyPaddingH,
-        y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
-        width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
-    footer.addSubview(back)
-
     let primary = makeWizardFooterButton(
         title: isLastStep ? WizardLabels.submit : WizardLabels.next,
-        fill: Theme.buttonPersist.withAlphaComponent(0.22),
+        fill:  Theme.buttonPersist.withAlphaComponent(0.22),
         border: Theme.buttonPersist.withAlphaComponent(0.50),
         textColor: Theme.textPrimary)
+
+    // Row 2: Terminal (green) + Ok (neutral gray — intentionally distinct from
+    // Row 1's blue so the user never sees two same-colored primary buttons)
+    let terminal = makeWizardFooterButton(
+        title: WizardLabels.terminal,
+        fill:  Theme.buttonAllow.withAlphaComponent(0.22),
+        border: Theme.buttonAllow.withAlphaComponent(0.55),
+        textColor: Theme.textPrimary)
+    let cancel = makeWizardFooterButton(
+        title: WizardLabels.ok,
+        fill:  Theme.wizardNeutralFillRest,
+        border: Theme.wizardNeutralBorderRest,
+        textColor: Theme.textPrimary)
+
+    // Layout math: 2 rows of 2 equal-width buttons, 10pt top/bottom padding,
+    // rowGap between the two rows.
+    let buttonH = Layout.wizardFooterButtonHeight
+    let rowGap  = Layout.wizardFooterRowGap
+    let gutter  = Layout.wizardFooterGap
+    let sidePad = Layout.wizardBodyPaddingH
+    let colW    = (width - sidePad * 2 - gutter) / 2
+    let topPad: CGFloat = 10
+
+    // Row 2 sits at the bottom; row 1 above it.
+    let row2Y = topPad
+    let row1Y = topPad + buttonH + rowGap
+
+    back.frame     = NSRect(x: sidePad,                   y: row1Y, width: colW, height: buttonH)
+    primary.frame  = NSRect(x: sidePad + colW + gutter,   y: row1Y, width: colW, height: buttonH)
+    terminal.frame = NSRect(x: sidePad,                   y: row2Y, width: colW, height: buttonH)
+    cancel.frame   = NSRect(x: sidePad + colW + gutter,   y: row2Y, width: colW, height: buttonH)
+
+    footer.addSubview(back)
     footer.addSubview(primary)
-
-    let terminal = makeWizardFooterButton(title: WizardLabels.terminal,
-        fill: Theme.buttonAllow.withAlphaComponent(0.18),
-        border: Theme.buttonAllow.withAlphaComponent(0.45),
-        textColor: Theme.textPrimary)
-    terminal.frame = NSRect(x: 0, y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
-        width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
     footer.addSubview(terminal)
-
-    let cancel = makeWizardFooterButton(title: WizardLabels.ok,
-        fill: Theme.buttonDeny.withAlphaComponent(0.10),
-        border: Theme.buttonDeny.withAlphaComponent(0.35),
-        textColor: Theme.textPrimary)
-    cancel.frame = NSRect(x: 0, y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
-        width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
     footer.addSubview(cancel)
-
-    // Place: Back (left) · Primary (fill) · Terminal · Cancel (right)
-    let backRightEdge = back.frame.maxX + Layout.wizardFooterGap
-    let rightReserved = Layout.wizardFooterSideButtonWidth * 2 + Layout.wizardFooterGap * 2
-    primary.frame = NSRect(
-        x: backRightEdge,
-        y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
-        width: width - backRightEdge - rightReserved - Layout.wizardBodyPaddingH,
-        height: Layout.wizardFooterButtonHeight)
-    terminal.frame.origin.x = primary.frame.maxX + Layout.wizardFooterGap
-    cancel.frame.origin.x = terminal.frame.maxX + Layout.wizardFooterGap
 
     root.addSubview(footer)
 
     // Size root
-    let rootHeight = Layout.wizardHeaderHeight + bodyHeight + Layout.wizardFooterHeight
+    let rootHeight = Layout.wizardHeaderHeight + bodyHeight + Layout.wizardFooterTwoRowHeight
     root.frame.size = NSSize(width: width, height: rootHeight)
     header.frame.origin.y = rootHeight - Layout.wizardHeaderHeight
-    body.frame.origin.y = Layout.wizardFooterHeight
+    body.frame.origin.y = Layout.wizardFooterTwoRowHeight
 
     return WizardQuestionPanelHandles(
         root: root,
