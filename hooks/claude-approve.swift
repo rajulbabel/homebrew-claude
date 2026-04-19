@@ -3415,7 +3415,7 @@ func applyWizardSubmitEnabled(_ button: NSButton, enabled: Bool, isSubmit: Bool)
     button.isEnabled = enabled
     if enabled {
         let color = isSubmit ? Theme.buttonAllow : Theme.buttonPersist
-        button.layer?.backgroundColor = color.withAlphaComponent(isSubmit ? 0.22 : 0.22).cgColor
+        button.layer?.backgroundColor = color.withAlphaComponent(0.22).cgColor
         button.layer?.borderColor = color.withAlphaComponent(isSubmit ? 0.55 : 0.50).cgColor
         button.attributedTitle = NSAttributedString(string: button.title, attributes: [
             .font: Theme.wizardFooterButtonFont,
