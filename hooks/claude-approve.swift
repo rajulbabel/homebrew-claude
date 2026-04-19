@@ -3800,7 +3800,10 @@ final class WizardController: NSObject {
         // Other row highlight: on when the text field is currently active or
         // when the committed answer is .custom.
         h.otherRow.setSelected(otherActive || isCustom)
-        if case .preset(let idx) = answer, idx < h.optionRowViews.count {
+        // Skip the preset-row highlight while Other is the active input — otherwise
+        // the previously-selected preset would stay visually highlighted alongside
+        // Other, making it look like two options are selected simultaneously.
+        if !otherActive, case .preset(let idx) = answer, idx < h.optionRowViews.count {
             let row = h.optionRowViews[idx]
             row.layer?.backgroundColor = Theme.wizardRowSelectedBg.cgColor
             row.layer?.borderColor = Theme.wizardRowSelectedBorder.cgColor
