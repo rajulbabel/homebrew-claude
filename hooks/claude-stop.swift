@@ -954,7 +954,10 @@ private final class StopHandler: NSObject {
     }
 
     /// Button click target — delegates to `animatePress(index:)` via the button's tag.
-    @objc func tapped(_ sender: NSButton) { animatePress(index: sender.tag) }
+    @objc func tapped(_ sender: NSButton) {
+        animateButtonPress(sender)
+        animatePress(index: sender.tag)
+    }
 }
 
 // MARK: - Dialog Construction
@@ -1237,6 +1240,37 @@ private func addStopKeyboardBadge(to button: NSButton, number: Int, tint: NSColo
     button.addSubview(badge)
 }
 
+/// Plays a subtle press-in / release animation on any layer-backed button.
+/// Local copy of the helper in `claude-approve.swift` (files don't share code).
+private func animateButtonPress(_ button: NSView) {
+    guard let layer = button.layer else { return }
+    CATransaction.begin()
+    CATransaction.setAnimationDuration(0.06)
+    CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+    let press = CABasicAnimation(keyPath: "transform.scale")
+    press.fromValue = 1.0
+    press.toValue   = 0.96
+    press.duration  = 0.06
+    press.fillMode  = .forwards
+    press.isRemovedOnCompletion = false
+    layer.add(press, forKey: "stopPressIn")
+    CATransaction.commit()
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.12)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        let release = CABasicAnimation(keyPath: "transform.scale")
+        release.fromValue = 0.96
+        release.toValue   = 1.0
+        release.duration  = 0.12
+        release.fillMode  = .forwards
+        release.isRemovedOnCompletion = false
+        layer.add(release, forKey: "stopPressOut")
+        CATransaction.commit()
+    }
+}
+
 /// Builds and runs the Done notification panel, blocking until the user dismisses it
 /// or the auto-dismiss timer fires.
 ///
@@ -1284,8 +1318,12 @@ private func showStopDialog(input: StopInput) {
     // Keyboard: 1/Enter → Go to Terminal, 2/Esc → Ok
     let keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
         switch event.charactersIgnoringModifiers ?? "" {
-        case "1", "\r":     handler.animatePress(index: 0); return nil
-        case "2", "\u{1b}": handler.animatePress(index: 1); return nil
+        case "1", "\r":
+            if handler.buttons.indices.contains(0) { animateButtonPress(handler.buttons[0]) }
+            handler.animatePress(index: 0); return nil
+        case "2", "\u{1b}":
+            if handler.buttons.indices.contains(1) { animateButtonPress(handler.buttons[1]) }
+            handler.animatePress(index: 1); return nil
         default:            return event
         }
     }
