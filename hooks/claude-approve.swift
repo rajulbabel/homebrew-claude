@@ -2938,10 +2938,17 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     }
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        // Return → submit; Shift+Return (insertLineBreak:) and Option+Return
-        // (insertNewlineIgnoringFieldEditor:) → explicit newline; Esc → exit.
+        // Return → submit; Shift+Return / Option+Return → explicit newline.
+        // macOS routes Shift+Return through `insertNewline:` in plain NSTextView,
+        // so we disambiguate via the current event's modifier flags rather than
+        // relying only on the selector.
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            onSubmit()
+            let shift = NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false
+            if shift {
+                textView.insertText("\n", replacementRange: textView.selectedRange())
+            } else {
+                onSubmit()
+            }
             return true
         }
         if commandSelector == #selector(NSResponder.insertLineBreak(_:)) ||
@@ -3726,15 +3733,19 @@ final class WizardController: NSObject {
     }
 
     /// Rebuilds the current step so the panel's body and root resize to fit
-    /// the Other row's new height. Re-activates Other and restores the caret
+    /// the Other row's new height. Deferred to the next run-loop turn so the
+    /// text view's delegate (which triggered the growth) finishes before we
+    /// tear its view hierarchy down. Re-activates Other and restores the caret
     /// to the end of the text so typing continues smoothly.
     private func handleOtherRowGrowth() {
-        guard let h = currentQuestionHandles else { return }
-        let wasActive = h.otherRow.isActive
-        renderCurrentStep()
-        if wasActive, let newH = currentQuestionHandles {
-            newH.otherRow.activate()
-            newH.otherRow.moveCaretToEnd()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let h = self.currentQuestionHandles else { return }
+            let wasActive = h.otherRow.isActive
+            self.renderCurrentStep()
+            if wasActive, let newH = self.currentQuestionHandles {
+                newH.otherRow.activate()
+                newH.otherRow.moveCaretToEnd()
+            }
         }
     }
 
@@ -3879,14 +3890,14 @@ func runAskUserQuestionWizard(questions: [WizardQuestion]) -> WizardOutcome {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
 
-    // Panel shell (mirrors existing dialog behavior: non-activating, all-spaces).
-    // WizardPanel (not plain NSPanel) is required so a borderless panel can
-    // still accept keyboard input — otherwise typing and arrow-key navigation
-    // never reach the wizard.
+    // Panel shell. Style `.titled + .fullSizeContentView` with a hidden
+    // titlebar gives a borderless look while still behaving like a standard
+    // panel for keyboard-focus purposes — pure `.borderless` + nonactivating
+    // panels don't reliably accept keyDown events on all macOS versions.
     let initialHeight = Layout.wizardInitialPanelHeight
     let panel = WizardPanel(
         contentRect: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: initialHeight),
-        styleMask: [.borderless, .nonactivatingPanel],
+        styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView],
         backing: .buffered, defer: false)
     panel.isFloatingPanel = true
     panel.level = .floating
@@ -3894,8 +3905,15 @@ func runAskUserQuestionWizard(questions: [WizardQuestion]) -> WizardOutcome {
     panel.hasShadow = true
     panel.backgroundColor = Theme.background
     panel.isOpaque = false
+    panel.titleVisibility = .hidden
+    panel.titlebarAppearsTransparent = true
+    panel.standardWindowButton(.closeButton)?.isHidden = true
+    panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+    panel.standardWindowButton(.zoomButton)?.isHidden = true
+    panel.isMovableByWindowBackground = true
     panel.contentView?.wantsLayer = true
     panel.contentView?.layer?.cornerRadius = Layout.wizardPanelCornerRadius
+    panel.contentView?.layer?.masksToBounds = true
 
     let container = NSView(frame: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: initialHeight))
     panel.contentView?.addSubview(container)
