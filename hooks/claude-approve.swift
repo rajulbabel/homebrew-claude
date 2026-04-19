@@ -2435,11 +2435,14 @@ final class WizardState {
 ///      → answer line (option label — description, OR custom text)
 /// ```
 /// Multi-line custom answers preserve their newlines; continuation lines are
-/// indented four spaces so they line up under the `→` marker.
+/// indented five spaces so they align under the content after `→`.
 ///
 /// Unanswered questions render `→ (no answer)` — should not normally occur
 /// because Submit is disabled until all answers are present, but the safety
 /// branch keeps the output unambiguous if a submission ever happens anyway.
+///
+/// Out-of-range preset indices (upstream invariant violation) render as
+/// `→ (invalid option)` rather than crashing the hook.
 func formatWizardAnswers(state: WizardState) -> String {
     var lines: [String] = ["User answered inline via dialog:", ""]
     for (i, q) in state.questions.enumerated() {
@@ -2447,9 +2450,13 @@ func formatWizardAnswers(state: WizardState) -> String {
         lines.append("\(i + 1). \(headerPart)\(q.question)")
         switch state.answers[i] {
         case .preset(let idx):
-            let opt = q.options[idx]
-            let suffix = opt.description.isEmpty ? "" : " — \(opt.description)"
-            lines.append("   → \(opt.label)\(suffix)")
+            if idx >= 0, idx < q.options.count {
+                let opt = q.options[idx]
+                let suffix = opt.description.isEmpty ? "" : " — \(opt.description)"
+                lines.append("   → \(opt.label)\(suffix)")
+            } else {
+                lines.append("   → (invalid option)")
+            }
         case .custom(let text):
             let parts = text.components(separatedBy: "\n")
             lines.append("   → \(parts[0])")

@@ -1534,9 +1534,24 @@ func testFormatWizardAnswers() {
         s.commitCustom(question: 0, text: "line one\nline two\nline three")
         let out = formatWizardAnswers(state: s)
         assertContains(out, "→ line one")
-        // continuation lines should be indented 4 spaces to visually group under →
-        assertContains(out, "    line two")
-        assertContains(out, "    line three")
+        // continuation lines should be indented 5 spaces to align under content after →
+        assertContains(out, "     line two")
+        assertContains(out, "     line three")
+    }
+    test("formatWizardAnswers: invalid preset index yields (invalid option)") {
+        let s = WizardState(questions: [q1])
+        s.answers[0] = .preset(index: 99)
+        let out = formatWizardAnswers(state: s)
+        assertContains(out, "→ (invalid option)")
+    }
+    test("formatWizardAnswers: empty header omits the bracket pill") {
+        let q = WizardQuestion(header: "", question: "Q?",
+            options: [WizardOption(label: "Yes", description: "")])
+        let s = WizardState(questions: [q])
+        s.selectPreset(question: 0, optionIndex: 0)
+        let out = formatWizardAnswers(state: s)
+        assertContains(out, "1. Q?")
+        assertNotContains(out, "1. []")
     }
     test("formatWizardAnswers: multiple questions numbered sequentially") {
         let s = WizardState(questions: [q1, q2])
