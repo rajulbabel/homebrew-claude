@@ -3853,6 +3853,14 @@ private final class WizardClickGesture: NSClickGestureRecognizer {
     var payload: Int = 0
 }
 
+/// A borderless `NSPanel` that can become key. Borderless panels default to
+/// `canBecomeKey == false`, which blocks keyboard events (typing, arrow-key
+/// navigation) from reaching the wizard. We need them to reach us.
+private final class WizardPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 /// Creates the NSPanel, installs a content container, and runs the wizard.
 ///
 /// Mirrors the non-activating, all-Spaces behavior of the legacy permission
@@ -3871,9 +3879,12 @@ func runAskUserQuestionWizard(questions: [WizardQuestion]) -> WizardOutcome {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
 
-    // Panel shell (mirrors existing dialog behavior: non-activating, all-spaces)
+    // Panel shell (mirrors existing dialog behavior: non-activating, all-spaces).
+    // WizardPanel (not plain NSPanel) is required so a borderless panel can
+    // still accept keyboard input — otherwise typing and arrow-key navigation
+    // never reach the wizard.
     let initialHeight = Layout.wizardInitialPanelHeight
-    let panel = NSPanel(
+    let panel = WizardPanel(
         contentRect: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: initialHeight),
         styleMask: [.borderless, .nonactivatingPanel],
         backing: .buffered, defer: false)
@@ -3897,7 +3908,10 @@ func runAskUserQuestionWizard(questions: [WizardQuestion]) -> WizardOutcome {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    panel.orderFrontRegardless()
+    // Bring the wizard to front with keyboard focus. `activatePanel` runs
+    // `NSApp.activate()` + `makeKeyAndOrderFront(nil)` — matches the legacy
+    // permission dialog's focus-acquisition path.
+    activatePanel(panel)
 
     // Sibling dialogs use SIGUSR1 to re-activate the next hook process.
     // Default action for SIGUSR1 is terminate — ignore it so a parallel dialog
