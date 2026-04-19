@@ -964,23 +964,29 @@ private final class StopHandler: NSObject {
 /// - Parameter height: Total panel height in points.
 /// - Returns: A configured floating `NSPanel` centered on the main screen.
 private func makeStopPanel(height: CGFloat) -> NSPanel {
-    let panel = NSPanel(
+    let panel = StopPanel(
         contentRect: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: height),
-        styleMask: [.titled, .closable, .nonactivatingPanel],
-        backing: .buffered, defer: false
+        styleMask:   [.titled, .nonactivatingPanel, .fullSizeContentView],
+        backing:     .buffered, defer: false
     )
-    panel.title = "Claude Code"
     panel.level = .floating
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-    panel.isMovableByWindowBackground = true
     panel.backgroundColor = Theme.background
-    panel.titleVisibility = .visible
-    panel.appearance = NSAppearance(named: .darkAqua)
+    panel.isOpaque = false
+    panel.hasShadow = true
+    panel.titleVisibility = .hidden
+    panel.titlebarAppearsTransparent = true
+    panel.standardWindowButton(.closeButton)?.isHidden = true
     panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
     panel.standardWindowButton(.zoomButton)?.isHidden = true
+    panel.appearance = NSAppearance(named: .darkAqua)
+    panel.contentView?.wantsLayer = true
+    panel.contentView?.layer?.cornerRadius = Layout.stopPanelCornerRadius
+    panel.contentView?.layer?.masksToBounds = true
     if let screen = NSScreen.main {
         let f = screen.visibleFrame
-        panel.setFrameOrigin(NSPoint(x: f.midX - Layout.panelWidth / 2, y: f.midY - height / 2))
+        panel.setFrameOrigin(NSPoint(x: f.midX - Layout.panelWidth / 2,
+                                     y: f.midY - height / 2))
     } else {
         panel.center()
     }
