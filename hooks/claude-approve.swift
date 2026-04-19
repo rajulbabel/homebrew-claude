@@ -242,6 +242,7 @@ enum Theme {
     static let wizardLabelFont             = NSFont.systemFont(ofSize: 12, weight: .semibold)
     static let wizardDescFont              = NSFont.systemFont(ofSize: 11, weight: .regular)
     static let wizardOtherTextFont         = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    static let wizardIndexFont             = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
 }
 
 // MARK: - Layout
@@ -340,7 +341,15 @@ enum Layout {
     static let wizardRowCornerRadius: CGFloat = 8
     static let wizardRadioSize: CGFloat = 14
     static let wizardRadioInnerRing: CGFloat = 2.5
+    static let wizardRadioBorderWidth: CGFloat = 2
     static let wizardRadioGap: CGFloat = 10
+    // Baselines for the label + description stack inside a row (bottom-origin Y).
+    static let wizardRowLabelY: CGFloat = 21
+    static let wizardRowLabelHeight: CGFloat = 16
+    static let wizardRowDescY: CGFloat = 5
+    static let wizardRowDescHeight: CGFloat = 14
+    static let wizardRowIndexWidth: CGFloat = 16
+    static let wizardRowIndexHeight: CGFloat = 14
 
     // Wizard — progress dots
     static let wizardProgressDotWidth: CGFloat = 22
@@ -2563,7 +2572,7 @@ func buildWizardOptionRow(label: String, description: String, selected: Bool, in
         height: Layout.wizardRadioSize))
     radio.wantsLayer = true
     radio.layer?.cornerRadius = Layout.wizardRadioSize / 2
-    radio.layer?.borderWidth = 2
+    radio.layer?.borderWidth = Layout.wizardRadioBorderWidth
     if selected {
         radio.layer?.borderColor = Theme.buttonAllow.cgColor
         radio.layer?.backgroundColor = Theme.buttonAllow.cgColor
@@ -2585,33 +2594,36 @@ func buildWizardOptionRow(label: String, description: String, selected: Bool, in
 
     // Text stack (label + description)
     let textX = Layout.wizardRowPaddingH + Layout.wizardRadioSize + Layout.wizardRadioGap
-    let indexLabelWidth: CGFloat = 16
-    let textWidth = container.frame.width - textX - Layout.wizardRowPaddingH - indexLabelWidth
+    let textWidth = container.frame.width - textX - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth
 
     let labelField = NSTextField(labelWithString: label)
     labelField.font = Theme.wizardLabelFont
     labelField.textColor = Theme.textPrimary
-    labelField.frame = NSRect(x: textX, y: 21, width: textWidth, height: 16)
+    labelField.lineBreakMode = .byTruncatingTail
+    labelField.frame = NSRect(x: textX, y: Layout.wizardRowLabelY,
+                              width: textWidth, height: Layout.wizardRowLabelHeight)
     container.addSubview(labelField)
 
     if !description.isEmpty {
         let descField = NSTextField(labelWithString: description)
         descField.font = Theme.wizardDescFont
         descField.textColor = Theme.textSecondary
-        descField.frame = NSRect(x: textX, y: 5, width: textWidth, height: 14)
+        descField.lineBreakMode = .byTruncatingTail
+        descField.frame = NSRect(x: textX, y: Layout.wizardRowDescY,
+                                 width: textWidth, height: Layout.wizardRowDescHeight)
         container.addSubview(descField)
     }
 
     // Index number on the right
     if index > 0 {
         let idxField = NSTextField(labelWithString: "\(index)")
-        idxField.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        idxField.font = Theme.wizardIndexFont
         idxField.textColor = selected ? Theme.buttonAllow : Theme.textSecondary.withAlphaComponent(0.55)
         idxField.alignment = .right
         idxField.frame = NSRect(
-            x: container.frame.width - Layout.wizardRowPaddingH - indexLabelWidth,
-            y: (Layout.wizardRowHeightMin - 14) / 2,
-            width: indexLabelWidth, height: 14)
+            x: container.frame.width - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth,
+            y: (Layout.wizardRowHeightMin - Layout.wizardRowIndexHeight) / 2,
+            width: Layout.wizardRowIndexWidth, height: Layout.wizardRowIndexHeight)
         container.addSubview(idxField)
     }
 
