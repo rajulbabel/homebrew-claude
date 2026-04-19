@@ -452,16 +452,26 @@ enum WizardLabels {
     static let ok                      = "Ok"
 }
 
+/// Cached terminal button label. Parent-app detection requires a `ps` fork,
+/// so we resolve once per process and reuse across every footer render.
+private var cachedTerminalButtonLabel: String?
+
 /// Returns the label for the "go to parent app" footer button, adapted to
 /// the detected parent. Falls back to the terminal wording when the parent
-/// can't be identified or is a genuine terminal emulator.
+/// can't be identified or is a genuine terminal emulator. Memoized per
+/// process since the parent app does not change during a hook invocation.
 func terminalButtonLabel() -> String {
+    if let cached = cachedTerminalButtonLabel { return cached }
     let (_, parentApp) = resolveProcessAncestry()
     let app = parentApp ?? capturedTerminalApp
+    let label: String
     if app?.bundleIdentifier == "com.anthropic.claudefordesktop" {
-        return WizardLabels.terminalForClaudeDesktop
+        label = WizardLabels.terminalForClaudeDesktop
+    } else {
+        label = WizardLabels.terminal
     }
-    return WizardLabels.terminal
+    cachedTerminalButtonLabel = label
+    return label
 }
 
 /// Permission-dialog labels that are tool-independent. Tool-dependent

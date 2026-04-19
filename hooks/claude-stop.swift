@@ -153,16 +153,25 @@ enum StopLabels {
     static let ok                      = "Ok"
 }
 
+/// Cached terminal button label. Parent-app detection requires a `ps` fork,
+/// so we resolve once per process and reuse across every render.
+private var cachedTerminalButtonLabel: String?
+
 /// Returns the label for the "go to parent app" button in the Done dialog,
 /// adapted to the detected parent app. Same pattern as the copy in
-/// `claude-approve.swift`.
+/// `claude-approve.swift`. Memoized per process.
 func terminalButtonLabel() -> String {
+    if let cached = cachedTerminalButtonLabel { return cached }
     let (_, parentApp) = resolveProcessAncestry()
     let app = parentApp ?? capturedTerminalApp
+    let label: String
     if app?.bundleIdentifier == "com.anthropic.claudefordesktop" {
-        return StopLabels.terminalForClaudeDesktop
+        label = StopLabels.terminalForClaudeDesktop
+    } else {
+        label = StopLabels.terminal
     }
-    return StopLabels.terminal
+    cachedTerminalButtonLabel = label
+    return label
 }
 
 // MARK: - Input Parsing
