@@ -3867,7 +3867,9 @@ final class WizardController: NSObject {
             animateButtonPress(h.terminalButton)
         }
         outcome = .terminal
-        stopModal()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) {
+            self.stopModal()
+        }
     }
 
     @objc private func onCancel() {
@@ -3876,7 +3878,9 @@ final class WizardController: NSObject {
             animateButtonPress(h.cancelButton)
         }
         outcome = .cancel
-        stopModal()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) {
+            self.stopModal()
+        }
     }
 
     private func advance() {
@@ -3893,7 +3897,9 @@ final class WizardController: NSObject {
             // Last question → final submit. Matches Claude Code CLI flow
             // (no separate review step).
             outcome = .submit(reason: formatWizardAnswers(state: state))
-            stopModal()
+            DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) {
+                self.stopModal()
+            }
         } else {
             state.step = qi + 1
             otherActive = false
