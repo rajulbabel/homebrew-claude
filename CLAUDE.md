@@ -130,10 +130,22 @@ Reset session approvals first: `rm -rf /tmp/claude-hook-sessions/`
 11. **Stop dialog** — finish any Claude task (Q&A, agentic run, plan). The "Done"
     panel appears with a green pill, gist from the last message, and a scrollable
     content block. Auto-dismisses in 15 seconds; `Enter`/`Esc`/`1` dismiss early.
-12. **AskUserQuestion dialog** — trigger `AskUserQuestion` (e.g., ask Claude to
-    choose an approach). Purple-tagged dialog shows the question header, question
-    text, and numbered options. "Go to Terminal" (1/Enter) activates the terminal
-    and returns allow. "Skip Question" (2/Esc) denies.
+12. **AskUserQuestion wizard** — trigger `AskUserQuestion` with one or more questions.
+    Wizard panel appears. Work through every sub-case:
+    - **12a.** Single question → primary button says `Submit ⏎`, Return submits, no review step.
+    - **12b.** Three questions → per-question panels with Back/Next, then a Review panel
+      summarising every answer. `Submit Answers ⏎` on Review submits.
+    - **12c.** "Other" row → click it to morph into a multi-line text area. Type,
+      use Shift+Return for newlines, row grows to fit.
+    - **12d.** Type in Other, navigate away and back — typed text is still there.
+    - **12e.** On Review with any question unanswered, Submit is visibly greyed,
+      Return is a no-op.
+    - **12f.** Keyboard in option mode: `1..N` jumps, ↑/↓ walks options including Other,
+      ←/→ Back/Next, Return Next/Submit, Esc cancels.
+    - **12g.** Keyboard in Other text mode: digits type into the text, ←/→ caret,
+      ↑/↓ line navigation, Esc exits back to option mode (second Esc cancels).
+    - **12h.** Terminal button still opens the user's terminal (regression check).
+    - **12i.** Cancel closes the panel; Claude sees a "user cancelled" reason.
 
 ## Releases
 
