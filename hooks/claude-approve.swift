@@ -2033,6 +2033,52 @@ private func notifyNextSiblingDialog() {
     }
 }
 
+// MARK: - Button Animation
+
+/// Plays a subtle press-in / release animation on any layer-backed button.
+/// Used by every dialog's button press path (mouse click and keyboard
+/// shortcut) so the two feel identical. Pure visual; does not alter target/
+/// action or any behavior.
+///
+/// - Parameters:
+///   - button: The NSButton (or any NSView) to animate. Must be layer-backed.
+///   - restFillColor: Fill color to return to after the release phase; pass nil
+///     to keep whatever fill the caller sets afterwards.
+func animateButtonPress(_ button: NSView, restFillColor: NSColor? = nil) {
+    guard let layer = button.layer else { return }
+
+    // Press-in: scale to 0.96, brighten fill slightly.
+    CATransaction.begin()
+    CATransaction.setAnimationDuration(0.06)
+    CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+    let press = CABasicAnimation(keyPath: "transform.scale")
+    press.fromValue = 1.0
+    press.toValue   = 0.96
+    press.duration  = 0.06
+    press.fillMode  = .forwards
+    press.isRemovedOnCompletion = false
+    layer.add(press, forKey: "wizardPressIn")
+    CATransaction.commit()
+
+    // Release: scale back to 1.0 over 120 ms, ease-out.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.12)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        let release = CABasicAnimation(keyPath: "transform.scale")
+        release.fromValue = 0.96
+        release.toValue   = 1.0
+        release.duration  = 0.12
+        release.fillMode  = .forwards
+        release.isRemovedOnCompletion = false
+        layer.add(release, forKey: "wizardPressOut")
+        if let rest = restFillColor {
+            layer.backgroundColor = rest.cgColor
+        }
+        CATransaction.commit()
+    }
+}
+
 // MARK: - Button Handler
 
 /// Manages button press state, text input morphing, and dialog dismissal.
@@ -2075,6 +2121,7 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate {
         button.layer?.backgroundColor = option.color.withAlphaComponent(Theme.buttonPressAlpha).cgColor
         CATransaction.commit()
         CATransaction.flush()
+        animateButtonPress(button)
         button.display()
         DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) {
             NSApp.stopModal()
@@ -2202,6 +2249,7 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate {
         button.layer?.backgroundColor = option.color.withAlphaComponent(Theme.buttonPressAlpha).cgColor
         CATransaction.commit()
         CATransaction.flush()
+        animateButtonPress(button)
         button.display()
         DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) {
             NSApp.stopModal()
@@ -3769,6 +3817,10 @@ final class WizardController: NSObject {
         guard let h = currentQuestionHandles else { return }
         let qi = state.step
         let wasOtherActive = otherActive
+        // Press animation on the clicked preset row.
+        if g.payload >= 0, g.payload < h.optionRowViews.count {
+            animateButtonPress(h.optionRowViews[g.payload])
+        }
         state.selectPreset(question: qi, optionIndex: g.payload)
         if wasOtherActive {
             // Collapse Other row before applying selection colors.
@@ -3790,6 +3842,10 @@ final class WizardController: NSObject {
     }
 
     @objc private func onBack() {
+        // Press animation on the triggered button (mouse or keyboard path).
+        if let h = currentQuestionHandles {
+            animateButtonPress(h.backButton)
+        }
         if state.step > 0 {
             state.step -= 1
             otherActive = false
@@ -3798,15 +3854,27 @@ final class WizardController: NSObject {
     }
 
     @objc private func onPrimary() {
+        // Press animation on the triggered button (mouse or keyboard path).
+        if let h = currentQuestionHandles {
+            animateButtonPress(h.primaryButton)
+        }
         advance()
     }
 
     @objc private func onTerminal() {
+        // Press animation on the triggered button (mouse or keyboard path).
+        if let h = currentQuestionHandles {
+            animateButtonPress(h.terminalButton)
+        }
         outcome = .terminal
         stopModal()
     }
 
     @objc private func onCancel() {
+        // Press animation on the triggered button (mouse or keyboard path).
+        if let h = currentQuestionHandles {
+            animateButtonPress(h.cancelButton)
+        }
         outcome = .cancel
         stopModal()
     }
@@ -3847,6 +3915,8 @@ final class WizardController: NSObject {
         guard let h = currentQuestionHandles else { return }
         if otherActive { return }
         otherActive = true
+        // Press animation on the Other row as it activates.
+        animateButtonPress(h.otherRow)
         // Pre-commit existing pending text so Submit-enabled reflects reality.
         let text = state.pendingCustom[qi]
         if !text.isEmpty {
