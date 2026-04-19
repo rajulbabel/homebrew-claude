@@ -2532,6 +2532,92 @@ func formatWizardAnswers(state: WizardState) -> String {
     return lines.joined(separator: "\n")
 }
 
+/// Builds a single radio-card row view used in the question panel.
+///
+/// The row is a horizontal layout: radio circle (14×14), then a vertical
+/// stack holding the bolded label on top and a secondary-colored description
+/// below. The whole row is center-aligned vertically so the radio sits midway
+/// between the two text lines.
+///
+/// - Parameters:
+///   - label: Bold label text (e.g. `"SQLite"` or `"Other"`).
+///   - description: Secondary description text under the label. Empty hides the line.
+///   - selected: If true, radio is filled and the row uses selected colors.
+///   - index: 1-based display index shown on the right; pass 0 to hide.
+/// - Returns: A configured `NSView` sized to the panel width × wizardRowHeightMin.
+func buildWizardOptionRow(label: String, description: String, selected: Bool, index: Int) -> NSView {
+    let container = NSView(frame: NSRect(x: 0, y: 0,
+        width: Layout.panelWidth - Layout.wizardBodyPaddingH * 2,
+        height: Layout.wizardRowHeightMin))
+    container.wantsLayer = true
+    container.layer?.cornerRadius = Layout.wizardRowCornerRadius
+    container.layer?.backgroundColor = (selected ? Theme.wizardRowSelectedBg : Theme.wizardRowBg).cgColor
+    container.layer?.borderColor = (selected ? Theme.wizardRowSelectedBorder : Theme.wizardRowBorder).cgColor
+    container.layer?.borderWidth = 1
+
+    // Radio
+    let radio = NSView(frame: NSRect(
+        x: Layout.wizardRowPaddingH,
+        y: (Layout.wizardRowHeightMin - Layout.wizardRadioSize) / 2,
+        width: Layout.wizardRadioSize,
+        height: Layout.wizardRadioSize))
+    radio.wantsLayer = true
+    radio.layer?.cornerRadius = Layout.wizardRadioSize / 2
+    radio.layer?.borderWidth = 2
+    if selected {
+        radio.layer?.borderColor = Theme.buttonAllow.cgColor
+        radio.layer?.backgroundColor = Theme.buttonAllow.cgColor
+        // Inner ring hole
+        let ring = NSView(frame: NSRect(
+            x: Layout.wizardRadioInnerRing,
+            y: Layout.wizardRadioInnerRing,
+            width: Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2,
+            height: Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2))
+        ring.wantsLayer = true
+        ring.layer?.backgroundColor = Theme.wizardRadioInnerGap.cgColor
+        ring.layer?.cornerRadius = (Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2) / 2
+        radio.addSubview(ring)
+    } else {
+        radio.layer?.borderColor = Theme.textSecondary.withAlphaComponent(0.55).cgColor
+        radio.layer?.backgroundColor = NSColor.clear.cgColor
+    }
+    container.addSubview(radio)
+
+    // Text stack (label + description)
+    let textX = Layout.wizardRowPaddingH + Layout.wizardRadioSize + Layout.wizardRadioGap
+    let indexLabelWidth: CGFloat = 16
+    let textWidth = container.frame.width - textX - Layout.wizardRowPaddingH - indexLabelWidth
+
+    let labelField = NSTextField(labelWithString: label)
+    labelField.font = Theme.wizardLabelFont
+    labelField.textColor = Theme.textPrimary
+    labelField.frame = NSRect(x: textX, y: 21, width: textWidth, height: 16)
+    container.addSubview(labelField)
+
+    if !description.isEmpty {
+        let descField = NSTextField(labelWithString: description)
+        descField.font = Theme.wizardDescFont
+        descField.textColor = Theme.textSecondary
+        descField.frame = NSRect(x: textX, y: 5, width: textWidth, height: 14)
+        container.addSubview(descField)
+    }
+
+    // Index number on the right
+    if index > 0 {
+        let idxField = NSTextField(labelWithString: "\(index)")
+        idxField.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        idxField.textColor = selected ? Theme.buttonAllow : Theme.textSecondary.withAlphaComponent(0.55)
+        idxField.alignment = .right
+        idxField.frame = NSRect(
+            x: container.frame.width - Layout.wizardRowPaddingH - indexLabelWidth,
+            y: (Layout.wizardRowHeightMin - 14) / 2,
+            width: indexLabelWidth, height: 14)
+        container.addSubview(idxField)
+    }
+
+    return container
+}
+
 // MARK: - Dialog Construction
 
 /// Builds and runs the permission dialog, returning the user's selected result key.
