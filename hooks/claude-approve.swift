@@ -3521,6 +3521,7 @@ final class WizardController: NSObject {
     }
 
     private func applySelectionFromState(_ h: WizardQuestionPanelHandles, questionIndex: Int) {
+        guard questionIndex >= 0, questionIndex < state.questions.count else { return }
         let answer = state.answers[questionIndex]
         // Deselect all preset rows
         for row in h.optionRowViews {
@@ -3545,9 +3546,9 @@ final class WizardController: NSObject {
         // Preset row clicks
         for (i, row) in h.optionRowViews.enumerated() {
             row.gestureRecognizers.forEach { row.removeGestureRecognizer($0) }
-            let click = NSClickGestureRecognizer(
+            let click = WizardClickGesture(
                 target: self, action: #selector(onPresetClicked(_:)))
-            click.setAssociatedValue(i, forKey: "optionIndex")  // helper below
+            click.payload = i
             row.addGestureRecognizer(click)
         }
         // Other row
@@ -3580,9 +3581,9 @@ final class WizardController: NSObject {
     private func wireReviewHandles(_ h: WizardReviewPanelHandles) {
         for (i, row) in h.reviewRows.enumerated() {
             row.gestureRecognizers.forEach { row.removeGestureRecognizer($0) }
-            let click = NSClickGestureRecognizer(
+            let click = WizardClickGesture(
                 target: self, action: #selector(onReviewRowClicked(_:)))
-            click.setAssociatedValue(i, forKey: "questionIndex")
+            click.payload = i
             row.addGestureRecognizer(click)
         }
         for (i, edit) in h.editButtons.enumerated() {
@@ -3602,20 +3603,18 @@ final class WizardController: NSObject {
 
     // MARK: Actions
 
-    @objc private func onPresetClicked(_ g: NSClickGestureRecognizer) {
+    @objc private func onPresetClicked(_ g: WizardClickGesture) {
         guard let h = currentQuestionHandles else { return }
         let qi = state.step
-        guard let optIdx = g.associatedValue(forKey: "optionIndex") as? Int else { return }
         h.otherRow.deactivate()
-        state.selectPreset(question: qi, optionIndex: optIdx)
+        state.selectPreset(question: qi, optionIndex: g.payload)
         applySelectionFromState(h, questionIndex: qi)
         applyProgress(dots: h.progressDots)
         recomputePrimaryEnabled()
     }
 
-    @objc private func onReviewRowClicked(_ g: NSClickGestureRecognizer) {
-        guard let qi = g.associatedValue(forKey: "questionIndex") as? Int else { return }
-        jumpTo(step: qi)
+    @objc private func onReviewRowClicked(_ g: WizardClickGesture) {
+        jumpTo(step: g.payload)
     }
 
     @objc private func onEditClicked(_ sender: NSButton) {
@@ -3797,25 +3796,11 @@ final class WizardController: NSObject {
     }
 }
 
-// Small helper: attach arbitrary values to NSGestureRecognizer via objc_setAssociatedObject
-// so that one action can be reused for many rows without per-row subclassing.
-private var wizardAssocKeys: [String: UnsafeRawPointer] = [:]
-private let wizardAssocLock = NSLock()
-private func wizardAssocKey(_ name: String) -> UnsafeRawPointer {
-    wizardAssocLock.lock(); defer { wizardAssocLock.unlock() }
-    if let p = wizardAssocKeys[name] { return p }
-    let raw = UnsafeMutablePointer<Int>.allocate(capacity: 1)
-    let ptr = UnsafeRawPointer(raw)
-    wizardAssocKeys[name] = ptr
-    return ptr
-}
-extension NSObject {
-    func setAssociatedValue(_ value: Any, forKey key: String) {
-        objc_setAssociatedObject(self, wizardAssocKey(key), value, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-    }
-    func associatedValue(forKey key: String) -> Any? {
-        objc_getAssociatedObject(self, wizardAssocKey(key))
-    }
+/// A click-gesture subclass that carries a single `Int` payload so one
+/// `@objc` action can service many rows without per-row subclassing.
+/// Scoped narrowly to the wizard rather than adding methods to every NSObject.
+private final class WizardClickGesture: NSClickGestureRecognizer {
+    var payload: Int = 0
 }
 
 // MARK: - Dialog Construction
