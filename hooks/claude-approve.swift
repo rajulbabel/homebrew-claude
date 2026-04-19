@@ -229,6 +229,10 @@ enum Theme {
     static let wizardNeutralFillRest   = NSColor(calibratedWhite: 1.0, alpha: 0.06)
     static let wizardNeutralBorderRest = NSColor(calibratedWhite: 1.0, alpha: 0.18)
 
+    /// Hairline color used for dividers between the session-identity block
+    /// and the tag-pill row in every dialog. Subtle on dark mode panels.
+    static let wizardDivider           = NSColor(calibratedWhite: 1.0, alpha: 0.10)
+
     // Wizard — option row. Selected tints derive from `buttonAllow` so the
     // radio/card highlight stays in sync if the allow green is ever retuned.
     static let wizardRowBg                 = NSColor(calibratedWhite: 1.0, alpha: 0.03)
@@ -2356,7 +2360,7 @@ private func addHeader(to contentView: NSView, input: HookInput, panelHeight: CG
                                          width: Layout.panelWidth - Layout.panelInset * 2,
                                          height: Layout.separatorHeight))
     separator.wantsLayer = true
-    separator.layer?.backgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.10).cgColor
+    separator.layer?.backgroundColor = Theme.wizardDivider.cgColor
     contentView.addSubview(separator)
 
     return yPos
