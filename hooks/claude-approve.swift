@@ -3431,6 +3431,393 @@ func applyWizardSubmitEnabled(_ button: NSButton, enabled: Bool, isSubmit: Bool)
     }
 }
 
+/// Outcome of a wizard run, returned by `WizardController.run()`.
+enum WizardOutcome {
+    case submit(reason: String)        // Claude gets this reason as deny-feedback
+    case cancel                         // User dismissed; deny with generic reason
+    case terminal                       // User chose Go to Terminal; allow + open terminal
+}
+
+/// Drives a wizard session end-to-end: builds panels, routes events, keeps
+/// `WizardState` in sync with the UI, and resolves the modal with a
+/// `WizardOutcome` when the user submits / cancels / chooses terminal.
+final class WizardController: NSObject {
+    let state: WizardState
+    private let panel: NSPanel
+    private let container: NSView
+    private var currentQuestionHandles: WizardQuestionPanelHandles?
+    private var currentReviewHandles: WizardReviewPanelHandles?
+    private var outcome: WizardOutcome = .cancel
+    private var localKeyMonitor: Any?
+
+    init(state: WizardState, panel: NSPanel, contentContainer: NSView) {
+        self.state = state
+        self.panel = panel
+        self.container = contentContainer
+    }
+
+    /// Runs the wizard modally and returns its outcome.
+    func run() -> WizardOutcome {
+        renderCurrentStep()
+        installKeyMonitor()
+        NSApp.runModal(for: panel)
+        removeKeyMonitor()
+        return outcome
+    }
+
+    // MARK: Render
+
+    private func renderCurrentStep() {
+        // Clear container
+        container.subviews.forEach { $0.removeFromSuperview() }
+        currentQuestionHandles = nil
+        currentReviewHandles = nil
+
+        if state.isReviewStep {
+            let h = buildWizardReviewPanel(state: state)
+            container.addSubview(h.root)
+            resizePanelToFit(rootHeight: h.root.frame.height)
+            currentReviewHandles = h
+            wireReviewHandles(h)
+            applyWizardSubmitEnabled(h.submitButton, enabled: state.allAnswered, isSubmit: true)
+            h.backButton.isEnabled = true
+        } else {
+            let qIndex = state.step
+            let q = state.questions[qIndex]
+            let isLast = (state.questions.count == 1)  // single-question wizard → primary is Submit
+            let h = buildWizardQuestionPanel(
+                question: q, stepIndex: qIndex,
+                totalSteps: state.questions.count,
+                isLastStep: isLast)
+            container.addSubview(h.root)
+            resizePanelToFit(rootHeight: h.root.frame.height)
+            currentQuestionHandles = h
+            wireQuestionHandles(h, questionIndex: qIndex)
+            applySelectionFromState(h, questionIndex: qIndex)
+            applyProgress(dots: h.progressDots)
+            // Back disabled on step 0
+            h.backButton.isEnabled = (qIndex > 0)
+            // Primary disabled until current question has an answer
+            applyWizardSubmitEnabled(h.primaryButton,
+                enabled: state.answers[qIndex] != nil,
+                isSubmit: isLast)
+        }
+    }
+
+    private func resizePanelToFit(rootHeight: CGFloat) {
+        var frame = panel.frame
+        let delta = rootHeight - container.frame.height
+        frame.size.height += delta
+        frame.origin.y -= delta
+        panel.setFrame(frame, display: true)
+        container.frame = NSRect(x: 0, y: 0, width: container.frame.width, height: rootHeight)
+    }
+
+    private func applyProgress(dots: [NSView]) {
+        for (i, dot) in dots.enumerated() {
+            let filled = state.answers[i] != nil
+            dot.layer?.backgroundColor = (filled ? Theme.wizardProgressActive : Theme.wizardProgressInactive).cgColor
+        }
+    }
+
+    private func applySelectionFromState(_ h: WizardQuestionPanelHandles, questionIndex: Int) {
+        let answer = state.answers[questionIndex]
+        // Deselect all preset rows
+        for row in h.optionRowViews {
+            row.layer?.backgroundColor = Theme.wizardRowBg.cgColor
+            row.layer?.borderColor = Theme.wizardRowBorder.cgColor
+        }
+        h.otherRow.setSelected(false)
+        if case .preset(let idx) = answer, idx < h.optionRowViews.count {
+            let row = h.optionRowViews[idx]
+            row.layer?.backgroundColor = Theme.wizardRowSelectedBg.cgColor
+            row.layer?.borderColor = Theme.wizardRowSelectedBorder.cgColor
+        } else if case .custom = answer {
+            h.otherRow.setSelected(true)
+        }
+        // Restore pending custom text
+        h.otherRow.setText(state.pendingCustom[questionIndex])
+    }
+
+    // MARK: Wiring
+
+    private func wireQuestionHandles(_ h: WizardQuestionPanelHandles, questionIndex: Int) {
+        // Preset row clicks
+        for (i, row) in h.optionRowViews.enumerated() {
+            row.gestureRecognizers.forEach { row.removeGestureRecognizer($0) }
+            let click = NSClickGestureRecognizer(
+                target: self, action: #selector(onPresetClicked(_:)))
+            click.setAssociatedValue(i, forKey: "optionIndex")  // helper below
+            row.addGestureRecognizer(click)
+        }
+        // Other row
+        h.otherRow.onActivate = { [weak self] in
+            guard let self = self else { return }
+            self.activateOther(questionIndex: questionIndex)
+        }
+        h.otherRow.onTextChange = { [weak self] text in
+            guard let self = self else { return }
+            self.state.setPending(question: questionIndex, text: text)
+            // If Other is the selected answer, update answers in real-time too
+            if case .custom = self.state.answers[questionIndex] {
+                self.state.commitCustom(question: questionIndex, text: text)
+            }
+            self.recomputePrimaryEnabled()
+        }
+        h.otherRow.onSubmit = { [weak self] in self?.advance() }
+        h.otherRow.onEscape = { [weak self] in self?.exitOtherEditing() }
+
+        h.backButton.target = self
+        h.backButton.action = #selector(onBack)
+        h.primaryButton.target = self
+        h.primaryButton.action = #selector(onPrimary)
+        h.terminalButton.target = self
+        h.terminalButton.action = #selector(onTerminal)
+        h.cancelButton.target = self
+        h.cancelButton.action = #selector(onCancel)
+    }
+
+    private func wireReviewHandles(_ h: WizardReviewPanelHandles) {
+        for (i, row) in h.reviewRows.enumerated() {
+            row.gestureRecognizers.forEach { row.removeGestureRecognizer($0) }
+            let click = NSClickGestureRecognizer(
+                target: self, action: #selector(onReviewRowClicked(_:)))
+            click.setAssociatedValue(i, forKey: "questionIndex")
+            row.addGestureRecognizer(click)
+        }
+        for (i, edit) in h.editButtons.enumerated() {
+            edit.target = self
+            edit.action = #selector(onEditClicked(_:))
+            edit.tag = i
+        }
+        h.backButton.target = self
+        h.backButton.action = #selector(onBack)
+        h.submitButton.target = self
+        h.submitButton.action = #selector(onPrimary)
+        h.terminalButton.target = self
+        h.terminalButton.action = #selector(onTerminal)
+        h.cancelButton.target = self
+        h.cancelButton.action = #selector(onCancel)
+    }
+
+    // MARK: Actions
+
+    @objc private func onPresetClicked(_ g: NSClickGestureRecognizer) {
+        guard let h = currentQuestionHandles else { return }
+        let qi = state.step
+        guard let optIdx = g.associatedValue(forKey: "optionIndex") as? Int else { return }
+        h.otherRow.deactivate()
+        state.selectPreset(question: qi, optionIndex: optIdx)
+        applySelectionFromState(h, questionIndex: qi)
+        applyProgress(dots: h.progressDots)
+        recomputePrimaryEnabled()
+    }
+
+    @objc private func onReviewRowClicked(_ g: NSClickGestureRecognizer) {
+        guard let qi = g.associatedValue(forKey: "questionIndex") as? Int else { return }
+        jumpTo(step: qi)
+    }
+
+    @objc private func onEditClicked(_ sender: NSButton) {
+        jumpTo(step: sender.tag)
+    }
+
+    @objc private func onBack() {
+        if state.step > 0 {
+            state.step -= 1
+            renderCurrentStep()
+        }
+    }
+
+    @objc private func onPrimary() {
+        if state.isReviewStep {
+            guard state.allAnswered else { return }
+            outcome = .submit(reason: formatWizardAnswers(state: state))
+            stopModal()
+        } else {
+            advance()
+        }
+    }
+
+    @objc private func onTerminal() {
+        outcome = .terminal
+        stopModal()
+    }
+
+    @objc private func onCancel() {
+        outcome = .cancel
+        stopModal()
+    }
+
+    private func advance() {
+        // If at last question and review step exists → go to review
+        // If single question, submit now
+        let qi = state.step
+        guard state.answers[qi] != nil else { return }
+        if state.questions.count == 1 {
+            outcome = .submit(reason: formatWizardAnswers(state: state))
+            stopModal()
+            return
+        }
+        if qi < state.questions.count - 1 {
+            state.step = qi + 1
+        } else {
+            state.step = state.questions.count  // review
+        }
+        renderCurrentStep()
+    }
+
+    private func jumpTo(step: Int) {
+        guard step >= 0 && step < state.questions.count else { return }
+        state.step = step
+        renderCurrentStep()
+    }
+
+    private func activateOther(questionIndex qi: Int) {
+        guard let h = currentQuestionHandles else { return }
+        h.otherRow.activate()
+        // Treat Other as an answer commit only if text is non-empty
+        if !h.otherRow.currentText.isEmpty {
+            state.commitCustom(question: qi, text: h.otherRow.currentText)
+        }
+        applySelectionFromState(h, questionIndex: qi)
+        recomputePrimaryEnabled()
+    }
+
+    private func exitOtherEditing() {
+        guard let h = currentQuestionHandles else { return }
+        h.otherRow.deactivate()
+    }
+
+    private func recomputePrimaryEnabled() {
+        if let h = currentQuestionHandles {
+            applyWizardSubmitEnabled(h.primaryButton,
+                enabled: state.answers[state.step] != nil,
+                isSubmit: state.questions.count == 1)
+        }
+        if let r = currentReviewHandles {
+            applyWizardSubmitEnabled(r.submitButton,
+                enabled: state.allAnswered, isSubmit: true)
+        }
+    }
+
+    private func stopModal() {
+        NSApp.stopModal()
+    }
+
+    // MARK: Key handling
+
+    private func installKeyMonitor() {
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self else { return event }
+            if self.handleKey(event) { return nil }
+            return event
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let m = localKeyMonitor {
+            NSEvent.removeMonitor(m)
+            localKeyMonitor = nil
+        }
+    }
+
+    /// Returns true if the event was consumed.
+    private func handleKey(_ event: NSEvent) -> Bool {
+        // If currently editing Other's text view, all keystrokes belong to the text view
+        // EXCEPT Esc (handled by the text view delegate) and Return (handled there too).
+        if let h = currentQuestionHandles, h.otherRow.isActive {
+            return false
+        }
+
+        switch event.keyCode {
+        case 126: // up arrow
+            moveSelection(by: -1); return true
+        case 125: // down arrow
+            moveSelection(by: +1); return true
+        case 123: // left arrow
+            onBack(); return true
+        case 124: // right arrow
+            onPrimary(); return true
+        case 36, 76: // return / enter
+            onPrimary(); return true
+        case 53: // esc
+            onCancel(); return true
+        default:
+            break
+        }
+
+        // Digit 1..9 jumps to option
+        if let chars = event.charactersIgnoringModifiers,
+           let c = chars.unicodeScalars.first,
+           c.value >= 0x31 && c.value <= 0x39 {
+            let digit = Int(c.value - 0x30) // 1..9
+            selectOption(byNumber: digit)
+            return true
+        }
+        return false
+    }
+
+    private func moveSelection(by delta: Int) {
+        guard let h = currentQuestionHandles else { return }
+        let qi = state.step
+        let total = state.questions[qi].options.count + 1 // + Other
+        let current: Int
+        switch state.answers[qi] {
+        case .preset(let i): current = i
+        case .custom:         current = total - 1
+        case .none:           current = -1
+        }
+        let next = (current + delta + total) % total
+        if next == total - 1 {
+            // Other row — activate but don't auto-type
+            activateOther(questionIndex: qi)
+        } else {
+            h.otherRow.deactivate()
+            state.selectPreset(question: qi, optionIndex: next)
+            applySelectionFromState(h, questionIndex: qi)
+        }
+        applyProgress(dots: h.progressDots)
+        recomputePrimaryEnabled()
+    }
+
+    private func selectOption(byNumber n: Int) {
+        guard let h = currentQuestionHandles else { return }
+        let qi = state.step
+        let total = state.questions[qi].options.count
+        if n <= total {
+            h.otherRow.deactivate()
+            state.selectPreset(question: qi, optionIndex: n - 1)
+            applySelectionFromState(h, questionIndex: qi)
+        } else if n == total + 1 {
+            activateOther(questionIndex: qi)
+        }
+        applyProgress(dots: h.progressDots)
+        recomputePrimaryEnabled()
+    }
+}
+
+// Small helper: attach arbitrary values to NSGestureRecognizer via objc_setAssociatedObject
+// so that one action can be reused for many rows without per-row subclassing.
+private var wizardAssocKeys: [String: UnsafeRawPointer] = [:]
+private let wizardAssocLock = NSLock()
+private func wizardAssocKey(_ name: String) -> UnsafeRawPointer {
+    wizardAssocLock.lock(); defer { wizardAssocLock.unlock() }
+    if let p = wizardAssocKeys[name] { return p }
+    let raw = UnsafeMutablePointer<Int>.allocate(capacity: 1)
+    let ptr = UnsafeRawPointer(raw)
+    wizardAssocKeys[name] = ptr
+    return ptr
+}
+extension NSObject {
+    func setAssociatedValue(_ value: Any, forKey key: String) {
+        objc_setAssociatedObject(self, wizardAssocKey(key), value, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+    func associatedValue(forKey key: String) -> Any? {
+        objc_getAssociatedObject(self, wizardAssocKey(key))
+    }
+}
+
 // MARK: - Dialog Construction
 
 /// Builds and runs the permission dialog, returning the user's selected result key.
