@@ -410,10 +410,13 @@ enum Layout {
     static let wizardFooterSideButtonWidth: CGFloat = 82
     /// Footer inner rows (2 stacked rows of 2 buttons each in the new layout).
     static let wizardFooterRowGap: CGFloat = 6
+    /// Vertical padding at the top and bottom of the two-row footer.
+    static let wizardFooterVerticalPadding: CGFloat = 10
     /// Total footer height = 2 rows × buttonHeight + rowGap + top/bottom padding.
     /// Replaces the single-row footer height used previously.
     static let wizardFooterTwoRowHeight: CGFloat =
-        wizardFooterButtonHeight * 2 + wizardFooterRowGap + 10 * 2
+        wizardFooterButtonHeight * 2 + wizardFooterRowGap
+        + wizardFooterVerticalPadding * 2
 
     // Wizard — Other row text area
     static let wizardOtherMinHeight: CGFloat = 20
@@ -3253,7 +3256,7 @@ func buildWizardQuestionPanel(
     let gutter  = Layout.wizardFooterGap
     let sidePad = Layout.wizardBodyPaddingH
     let colW    = (width - sidePad * 2 - gutter) / 2
-    let topPad: CGFloat = 10
+    let topPad  = Layout.wizardFooterVerticalPadding
 
     // Row 2 sits at the bottom; row 1 above it.
     let row2Y = topPad
