@@ -223,15 +223,18 @@ enum Theme {
     static let wizardButtonDisabledBorder  = NSColor(calibratedWhite: 1.0, alpha: 0.12)
     static let wizardButtonDisabledText    = NSColor(calibratedWhite: 0.45, alpha: 1.0)
 
-    // Wizard — option row
+    // Wizard — option row. Selected tints derive from `buttonAllow` so the
+    // radio/card highlight stays in sync if the allow green is ever retuned.
     static let wizardRowBg                 = NSColor(calibratedWhite: 1.0, alpha: 0.03)
     static let wizardRowBorder             = NSColor(calibratedWhite: 1.0, alpha: 0.08)
-    static let wizardRowSelectedBg         = NSColor(calibratedRed: 0.18, green: 0.80, blue: 0.44, alpha: 0.14)
-    static let wizardRowSelectedBorder     = NSColor(calibratedRed: 0.18, green: 0.80, blue: 0.44, alpha: 0.55)
-    static let wizardRadioInnerGap         = NSColor(calibratedRed: 0.10, green: 0.10, blue: 0.12, alpha: 1.0)
+    static let wizardRowSelectedBg         = buttonAllow.withAlphaComponent(0.14)
+    static let wizardRowSelectedBorder     = buttonAllow.withAlphaComponent(0.55)
+    /// Color painted inside the filled radio to produce the ring hole.
+    /// Aliases `background` so the hole stays flush with the panel.
+    static let wizardRadioInnerGap         = background
 
     // Wizard — progress dots
-    static let wizardProgressActive        = NSColor(calibratedRed: 0.18, green: 0.80, blue: 0.44, alpha: 1.0)
+    static let wizardProgressActive        = buttonAllow
     static let wizardProgressInactive      = NSColor(calibratedWhite: 1.0, alpha: 0.18)
 
     // Wizard — typography
