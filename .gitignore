@@ -28,6 +28,11 @@ telemetry/
 # Superpowers brainstorming session artifacts
 .superpowers/
 
+# Un-ignore our docs — the root `plans/` pattern above catches Claude Code's
+# runtime directory, but we keep spec/plan documents under docs/.
+!docs/
+!docs/**
+
 # macOS
 .DS_Store
 
