@@ -34,6 +34,16 @@ struct StopInput {
     var projectName: String { (cwd as NSString).lastPathComponent }
 }
 
+/// Borderless `NSPanel` that can still become key. A borderless panel
+/// defaults to `canBecomeKey == false`, which blocks keyboard shortcuts
+/// from reaching the Done dialog. Equivalent to the `WizardPanel` class
+/// in `claude-approve.swift` — duplicated here on purpose because the
+/// project convention is single-file scripts with no shared Swift module.
+private final class StopPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 // MARK: - Theme
 
 /// Visual theme constants — mirrors the dark palette used in claude-approve.
@@ -58,6 +68,14 @@ enum Theme {
     // Fonts
     static let mono       = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     static let buttonFont = NSFont.systemFont(ofSize: 12.5, weight: .bold)
+
+    // Stop — wizard-family palette (mirrors Theme.wizard* constants in claude-approve.swift).
+    static let stopRowBg             = NSColor(calibratedWhite: 1.0, alpha: 0.03)
+    static let stopRowBorder         = NSColor(calibratedWhite: 1.0, alpha: 0.08)
+    static let stopNeutralFillRest   = NSColor(calibratedWhite: 1.0, alpha: 0.06)
+    static let stopNeutralBorderRest = NSColor(calibratedWhite: 1.0, alpha: 0.18)
+    static let stopButtonFont        = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    static let stopSeparatorColor    = NSColor(calibratedWhite: 1.0, alpha: 0.10)
 }
 
 // MARK: - Layout
@@ -119,6 +137,19 @@ enum Layout {
 
     // Content limits
     static let maxContentLines = 500
+
+    // Stop — wizard-family dimensions.
+    static let stopPanelCornerRadius: CGFloat = 10
+    static let stopButtonCornerRadius: CGFloat = 8
+}
+
+// MARK: - Labels
+
+/// Done-dialog button labels. Kept as named constants so a future wording
+/// change touches this file only.
+enum StopLabels {
+    static let terminal = "Go to Terminal"
+    static let ok       = "Ok"
 }
 
 // MARK: - Input Parsing
