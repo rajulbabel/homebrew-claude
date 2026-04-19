@@ -2365,9 +2365,15 @@ func parseWizardQuestions(from toolInput: [String: Any]) -> [WizardQuestion] {
 /// The controller owns the only instance and mutates it directly. No internal
 /// notifications — the controller re-renders after each mutation.
 final class WizardState {
+    /// The parsed questions driving the wizard — immutable for the run.
     let questions: [WizardQuestion]
+    /// Per-question answer, indexed parallel to `questions`. `nil` = unanswered.
+    /// Always `questions.count` entries; established at init and never resized.
     var answers: [WizardAnswer?]
+    /// Per-question typed-but-not-committed "Other" text, indexed parallel to
+    /// `questions`. Always `questions.count` entries; survives step navigation.
     var pendingCustom: [String]
+    /// Current wizard step (see class doc comment for numbering).
     var step: Int = 0
 
     init(questions: [WizardQuestion]) {
