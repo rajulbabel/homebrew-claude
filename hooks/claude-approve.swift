@@ -253,6 +253,11 @@ enum Theme {
     static let wizardReviewRowAnswerFont   = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     static let wizardReviewEditFont        = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
     static let wizardFooterButtonFont      = NSFont.systemFont(ofSize: 12, weight: .semibold)
+
+    /// Accent color for the wizard's top-of-panel "ASKUSERQUESTION" tag.
+    /// Lavender — distinct from the per-tool pill colors so the inquiry dialog
+    /// has its own identity within the shared visual family.
+    static let wizardHeaderAccent = NSColor(calibratedRed: 0.655, green: 0.545, blue: 0.980, alpha: 1.0)
 }
 
 // MARK: - Layout
@@ -3077,7 +3082,13 @@ func buildWizardQuestionPanel(
 
     let tag = NSTextField(labelWithString: "ASKUSERQUESTION")
     tag.font = Theme.wizardHeaderTagFont
-    tag.textColor = Theme.toolTagColors["AskUserQuestion"] ?? Theme.mcpTag
+    tag.attributedStringValue = NSAttributedString(
+        string: "ASKUSERQUESTION",
+        attributes: [
+            .font: Theme.wizardHeaderTagFont,
+            .foregroundColor: Theme.wizardHeaderAccent,
+            .kern: 1.2,
+        ])
     tag.frame = NSRect(x: Layout.wizardBodyPaddingH, y: Layout.wizardHeaderLabelY,
                         width: Layout.wizardHeaderTagWidth, height: Layout.wizardHeaderLabelHeight)
     header.addSubview(tag)
@@ -3307,7 +3318,13 @@ func buildWizardReviewPanel(state: WizardState) -> WizardReviewPanelHandles {
     header.layer?.backgroundColor = Theme.background.cgColor
     let tag = NSTextField(labelWithString: "ASKUSERQUESTION · REVIEW")
     tag.font = Theme.wizardHeaderTagFont
-    tag.textColor = Theme.toolTagColors["AskUserQuestion"] ?? Theme.mcpTag
+    tag.attributedStringValue = NSAttributedString(
+        string: "ASKUSERQUESTION · REVIEW",
+        attributes: [
+            .font: Theme.wizardHeaderTagFont,
+            .foregroundColor: Theme.wizardHeaderAccent,
+            .kern: 1.2,
+        ])
     tag.frame = NSRect(x: Layout.wizardBodyPaddingH, y: Layout.wizardHeaderLabelY,
                        width: Layout.wizardHeaderReviewTagWidth,
                        height: Layout.wizardHeaderLabelHeight)
