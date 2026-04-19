@@ -3006,9 +3006,18 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
 
         if isActive {
             let scrollHeight = rowHeight - Layout.wizardOtherActivePaddingV * 2
+            // Measure how much vertical space the laid-out text actually uses; if it
+            // is shorter than the scroll view, shift the scroll view frame down so
+            // the visible text sits in the vertical center of the row instead of
+            // being stuck at the top with empty space underneath.
+            textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+            let used = textView.layoutManager?.usedRect(for: textView.textContainer!) ?? .zero
+            let textH = ceil(used.height) + 4  // matches textContainerInset contribution
+            let emptyBelow = max(0, scrollHeight - textH)
+            let scrollY = Layout.wizardOtherActivePaddingV + emptyBelow / 2
             scrollView.frame = NSRect(
-                x: textX, y: Layout.wizardOtherActivePaddingV,
-                width: textWidth, height: scrollHeight)
+                x: textX, y: scrollY,
+                width: textWidth, height: scrollHeight - emptyBelow)
         }
         idxField.frame.origin.y = (rowHeight - Layout.wizardRowIndexHeight) / 2
         labelField.frame.origin.y = isActive ? 0 : Layout.wizardRowLabelY
