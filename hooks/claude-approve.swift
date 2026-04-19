@@ -243,6 +243,16 @@ enum Theme {
     static let wizardDescFont              = NSFont.systemFont(ofSize: 11, weight: .regular)
     static let wizardOtherTextFont         = NSFont.systemFont(ofSize: 12, weight: .semibold)
     static let wizardIndexFont             = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    // Shared wizard header/pill/footer typography.
+    static let wizardHeaderTagFont         = NSFont.systemFont(ofSize: 11, weight: .bold)
+    static let wizardHeaderCounterFont     = NSFont.systemFont(ofSize: 11, weight: .medium)
+    static let wizardPillFont              = NSFont.systemFont(ofSize: 10.5, weight: .bold)
+    static let wizardReviewPillFont        = NSFont.systemFont(ofSize: 9.5, weight: .bold)
+    static let wizardReviewTitleFont       = NSFont.systemFont(ofSize: 13, weight: .medium)
+    static let wizardReviewRowQuestionFont = NSFont.systemFont(ofSize: 11, weight: .regular)
+    static let wizardReviewRowAnswerFont   = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    static let wizardReviewEditFont        = NSFont.systemFont(ofSize: 10.5, weight: .semibold)
+    static let wizardFooterButtonFont      = NSFont.systemFont(ofSize: 12, weight: .semibold)
 }
 
 // MARK: - Layout
@@ -356,6 +366,25 @@ enum Layout {
     static let wizardProgressDotHeight: CGFloat = 3
     static let wizardProgressDotGap: CGFloat = 6
     static let wizardProgressTopPadding: CGFloat = 18
+
+    // Wizard — header labels and step counter
+    static let wizardHeaderLabelHeight: CGFloat = 16
+    static let wizardHeaderLabelY: CGFloat = 9
+    static let wizardHeaderTagWidth: CGFloat = 180
+    static let wizardHeaderReviewTagWidth: CGFloat = 260
+    static let wizardHeaderCounterWidth: CGFloat = 100
+    static let wizardHeaderReviewCounterWidth: CGFloat = 180
+
+    // Wizard — body block heights and gaps
+    static let wizardPillHeight: CGFloat = 18
+    static let wizardPillHPadding: CGFloat = 16
+    static let wizardReviewPillHeight: CGFloat = 16
+    static let wizardReviewPillHPadding: CGFloat = 14
+    static let wizardBodyGapAfterPill: CGFloat = 6
+    static let wizardBodyGapAfterQuestion: CGFloat = 10
+    static let wizardReviewTitleHeight: CGFloat = 18
+    static let wizardReviewRowHeight: CGFloat = 60
+    static let wizardReviewRowSpacing: CGFloat = 8
 
     // Wizard — footer
     static let wizardFooterGap: CGFloat = 8
@@ -2942,18 +2971,20 @@ func buildWizardQuestionPanel(
     header.layer?.backgroundColor = Theme.background.cgColor
 
     let tag = NSTextField(labelWithString: "ASKUSERQUESTION")
-    tag.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+    tag.font = Theme.wizardHeaderTagFont
     tag.textColor = Theme.toolTagColors["AskUserQuestion"] ?? Theme.mcpTag
-    tag.frame = NSRect(x: Layout.wizardBodyPaddingH, y: 9,
-                        width: 180, height: 16)
+    tag.frame = NSRect(x: Layout.wizardBodyPaddingH, y: Layout.wizardHeaderLabelY,
+                        width: Layout.wizardHeaderTagWidth, height: Layout.wizardHeaderLabelHeight)
     header.addSubview(tag)
 
     let stepCounter = NSTextField(labelWithString: "\(stepIndex + 1) of \(totalSteps)")
-    stepCounter.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+    stepCounter.font = Theme.wizardHeaderCounterFont
     stepCounter.textColor = Theme.textSecondary
     stepCounter.alignment = .right
-    stepCounter.frame = NSRect(x: width - Layout.wizardBodyPaddingH - 100, y: 9,
-                               width: 100, height: 16)
+    stepCounter.frame = NSRect(
+        x: width - Layout.wizardBodyPaddingH - Layout.wizardHeaderCounterWidth,
+        y: Layout.wizardHeaderLabelY,
+        width: Layout.wizardHeaderCounterWidth, height: Layout.wizardHeaderLabelHeight)
     header.addSubview(stepCounter)
     root.addSubview(header)
 
@@ -2961,18 +2992,20 @@ func buildWizardQuestionPanel(
     let body = NSView(frame: .zero)
 
     // Header tag pill
+    let pillFont = Theme.wizardPillFont
     let pill = NSButton(frame: .zero)
     pill.title = question.header.uppercased()
-    pill.font = NSFont.systemFont(ofSize: 10.5, weight: .bold)
+    pill.font = pillFont
     pill.isBordered = false
     pill.wantsLayer = true
     pill.layer?.cornerRadius = 4
     pill.layer?.backgroundColor = (Theme.toolTagColors["AskUserQuestion"] ?? Theme.mcpTag).cgColor
     pill.contentTintColor = Theme.background
     let pillSize = (question.header.uppercased() as NSString)
-        .size(withAttributes: [.font: pill.font!])
+        .size(withAttributes: [.font: pillFont])
     pill.frame = NSRect(x: Layout.wizardBodyPaddingH, y: 0,
-                        width: ceil(pillSize.width) + 16, height: 18)
+                        width: ceil(pillSize.width) + Layout.wizardPillHPadding,
+                        height: Layout.wizardPillHeight)
     body.addSubview(pill)
 
     // Question text
@@ -3017,8 +3050,8 @@ func buildWizardQuestionPanel(
     // Layout body contents vertically
     // (we stack from top down; AppKit uses bottom-left origin, so we lay out at end)
     let pillTopY = Layout.wizardBodyPaddingV
-    let qTopY = pillTopY + 18 + 6
-    let rowTopY = qTopY + qHeight + 10
+    let qTopY = pillTopY + Layout.wizardPillHeight + Layout.wizardBodyGapAfterPill
+    let rowTopY = qTopY + qHeight + Layout.wizardBodyGapAfterQuestion
     // reserve space for option rows + other row + progress dots
     let totalRowsHeight = CGFloat(question.options.count + 1) *
         Layout.wizardRowHeightMin + CGFloat(question.options.count) * Layout.wizardRowGap
@@ -3028,7 +3061,7 @@ func buildWizardQuestionPanel(
     body.frame = NSRect(x: 0, y: Layout.wizardFooterHeight, width: width, height: bodyHeight)
 
     // Flip y (AppKit origin bottom-left)
-    pill.frame.origin.y = bodyHeight - pillTopY - 18
+    pill.frame.origin.y = bodyHeight - pillTopY - Layout.wizardPillHeight
     qField.frame.origin.y = bodyHeight - qTopY - qHeight
 
     var yCursor = bodyHeight - rowTopY - Layout.wizardRowHeightMin
@@ -3131,7 +3164,7 @@ func makeWizardFooterButton(title: String, fill: NSColor, border: NSColor, textC
     b.layer?.borderColor = border.cgColor
     b.layer?.borderWidth = 1
     b.attributedTitle = NSAttributedString(string: title, attributes: [
-        .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+        .font: Theme.wizardFooterButtonFont,
         .foregroundColor: textColor,
     ])
     return b
