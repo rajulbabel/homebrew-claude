@@ -2351,10 +2351,12 @@ private func addHeader(to contentView: NSView, input: HookInput, panelHeight: CG
     contentView.addSubview(pathLabel)
 
     yPos -= Layout.sectionGap
-    let separator = NSBox(frame: NSRect(x: Layout.panelInset, y: yPos,
-                                        width: Layout.panelWidth - Layout.panelInset * 2,
-                                        height: Layout.separatorHeight))
-    separator.boxType = .separator
+    // Hairline separator (matches the wizard body divider).
+    let separator = NSView(frame: NSRect(x: Layout.panelInset, y: yPos,
+                                         width: Layout.panelWidth - Layout.panelInset * 2,
+                                         height: Layout.separatorHeight))
+    separator.wantsLayer = true
+    separator.layer?.backgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.10).cgColor
     contentView.addSubview(separator)
 
     return yPos
@@ -2429,10 +2431,10 @@ private func addCodeBlock(to contentView: NSView, content: NSAttributedString,
         width: Layout.panelWidth - Layout.panelInset * 2, height: blockHeight
     ))
     codeContainer.wantsLayer = true
-    codeContainer.layer?.backgroundColor = Theme.codeBackground.cgColor
-    codeContainer.layer?.cornerRadius = Layout.codeCornerRadius
-    codeContainer.layer?.borderWidth = Layout.codeBorderWidth
-    codeContainer.layer?.borderColor = Theme.border.cgColor
+    codeContainer.layer?.cornerRadius = Layout.wizardRowCornerRadius
+    codeContainer.layer?.backgroundColor = Theme.wizardRowBg.cgColor
+    codeContainer.layer?.borderColor = Theme.wizardRowBorder.cgColor
+    codeContainer.layer?.borderWidth = 1
     contentView.addSubview(codeContainer)
 
     let borderInset = Layout.codeBorderWidth
