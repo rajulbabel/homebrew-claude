@@ -1225,6 +1225,9 @@ private func applyUnifiedStopButtonSkin(_ button: NSButton, tint: NSColor) {
     button.contentTintColor = Theme.textPrimary
 }
 
+/// Adds a 1-based keyboard-shortcut numeral to the left edge of a button,
+/// vertically centered. Mirror of `addKeyboardBadge` in `claude-approve.swift`
+/// so both dialogs show the same shortcut affordance.
 private func addStopKeyboardBadge(to button: NSButton, number: Int, tint: NSColor) {
     let badge = NSTextField(labelWithString: "\(number)")
     badge.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
