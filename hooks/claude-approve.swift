@@ -4291,6 +4291,9 @@ func runAskUserQuestionWizard(questions: [WizardQuestion]) -> WizardOutcome {
     // dismiss cannot kill our modal while the user is answering.
     signal(SIGUSR1, SIG_IGN)
 
+    let focusCleanup = installFocusRecoveryObservers(on: panel)
+    defer { focusCleanup() }
+
     let state = WizardState(questions: questions)
     let controller = WizardController(state: state, panel: panel, contentContainer: container)
     let outcome = controller.run()
@@ -4374,11 +4377,8 @@ private func showPermissionDialog(
         NSApp.stopModal()
     }
 
-    // Re-activate on Space switch
-    let spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
-        forName: NSWorkspace.activeSpaceDidChangeNotification,
-        object: nil, queue: .main
-    ) { _ in if panel.isVisible { activatePanel(panel) } }
+    // Re-activate on Space switch / app activation / screen wake
+    let focusCleanup = installFocusRecoveryObservers(on: panel)
 
     // SIGUSR1: sibling dialog dismissed, re-activate
     signal(SIGUSR1, SIG_IGN)
@@ -4390,7 +4390,7 @@ private func showPermissionDialog(
 
     defer {
         panel.orderOut(nil)
-        NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
+        focusCleanup()
         signalSource.cancel()
         if let monitor = keyboardMonitor { NSEvent.removeMonitor(monitor) }
     }

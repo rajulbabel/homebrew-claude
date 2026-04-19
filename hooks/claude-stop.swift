@@ -1395,14 +1395,11 @@ private func showStopDialog(input: StopInput) {
     // Auto-dismiss
     DispatchQueue.main.asyncAfter(deadline: .now() + Layout.autoDismiss) { NSApp.stopModal() }
 
-    // Re-activate on Space switch
-    let spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
-        forName: NSWorkspace.activeSpaceDidChangeNotification,
-        object: nil, queue: .main
-    ) { _ in if panel.isVisible { activateStopPanel(panel) } }
+    // Re-activate on Space switch / app activation / screen wake
+    let focusCleanup = installFocusRecoveryObservers(on: panel)
 
     defer {
-        NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
+        focusCleanup()
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
     }
     activateStopPanel(panel)
