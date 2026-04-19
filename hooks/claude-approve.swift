@@ -2355,6 +2355,71 @@ func parseWizardQuestions(from toolInput: [String: Any]) -> [WizardQuestion] {
     return result
 }
 
+/// Mutable state of a running wizard: the questions, the user's answers,
+/// typed-but-not-yet-committed "Other" text per question, and the current step.
+///
+/// Step numbering:
+///  - `0..<questions.count` — a question panel.
+///  - `questions.count` — the review panel (only used when `questions.count > 1`).
+///
+/// The controller owns the only instance and mutates it directly. No internal
+/// notifications — the controller re-renders after each mutation.
+final class WizardState {
+    let questions: [WizardQuestion]
+    var answers: [WizardAnswer?]
+    var pendingCustom: [String]
+    var step: Int = 0
+
+    init(questions: [WizardQuestion]) {
+        self.questions = questions
+        self.answers = Array(repeating: nil, count: questions.count)
+        self.pendingCustom = Array(repeating: "", count: questions.count)
+    }
+
+    /// The final step index. For a single-question wizard this is `0`
+    /// (no review). For multi-question it is `questions.count` (review panel).
+    var lastStep: Int {
+        questions.count <= 1 ? 0 : questions.count
+    }
+
+    /// True if the current step renders the review panel.
+    var isReviewStep: Bool {
+        questions.count > 1 && step == questions.count
+    }
+
+    /// True if every question has a non-nil answer.
+    var allAnswered: Bool {
+        answers.allSatisfy { $0 != nil }
+    }
+
+    /// Commits a preset-option pick as the answer to the given question.
+    /// Does not touch `pendingCustom` — typed Other text is preserved in case
+    /// the user changes their mind later.
+    func selectPreset(question: Int, optionIndex: Int) {
+        guard question >= 0, question < answers.count else { return }
+        answers[question] = .preset(index: optionIndex)
+    }
+
+    /// Commits a custom free-text answer. An empty string clears the answer
+    /// back to nil (so the user cannot submit an all-whitespace Other response).
+    func commitCustom(question: Int, text: String) {
+        guard question >= 0, question < answers.count else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            answers[question] = nil
+        } else {
+            answers[question] = .custom(text: text)
+        }
+    }
+
+    /// Stores typed-but-not-yet-committed text for the Other row of a question.
+    /// Survives step navigation so the user does not lose work when going Back.
+    func setPending(question: Int, text: String) {
+        guard question >= 0, question < pendingCustom.count else { return }
+        pendingCustom[question] = text
+    }
+}
+
 // MARK: - Dialog Construction
 
 /// Builds and runs the permission dialog, returning the user's selected result key.

@@ -1431,6 +1431,80 @@ func testParseWizardQuestions() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MARK: - WizardState Tests (9)
+// ═══════════════════════════════════════════════════════════════════
+
+func testWizardState() {
+    let q1 = WizardQuestion(
+        header: "DB", question: "Which database?",
+        options: [WizardOption(label: "PG", description: ""),
+                  WizardOption(label: "SQLite", description: "")])
+    let q2 = WizardQuestion(
+        header: "ENV", question: "Prod?",
+        options: [WizardOption(label: "Yes", description: ""),
+                  WizardOption(label: "No", description: "")])
+
+    test("WizardState: starts unanswered") {
+        let s = WizardState(questions: [q1, q2])
+        assertEq(s.answers.count, 2)
+        assertTrue(s.answers[0] == nil)
+        assertTrue(s.answers[1] == nil)
+        assertFalse(s.allAnswered)
+        assertEq(s.step, 0)
+    }
+    test("WizardState: selectPreset commits preset answer") {
+        let s = WizardState(questions: [q1])
+        s.selectPreset(question: 0, optionIndex: 1)
+        assertTrue(s.answers[0] == WizardAnswer.preset(index: 1))
+        assertTrue(s.allAnswered)
+    }
+    test("WizardState: commitCustom commits custom answer when non-empty") {
+        let s = WizardState(questions: [q1])
+        s.commitCustom(question: 0, text: "my_db")
+        assertTrue(s.answers[0] == WizardAnswer.custom(text: "my_db"))
+    }
+    test("WizardState: commitCustom with empty string clears answer") {
+        let s = WizardState(questions: [q1])
+        s.selectPreset(question: 0, optionIndex: 0)
+        s.commitCustom(question: 0, text: "")
+        assertTrue(s.answers[0] == nil)
+    }
+    test("WizardState: pendingCustom persists across navigation") {
+        let s = WizardState(questions: [q1, q2])
+        s.setPending(question: 0, text: "my_graph_db")
+        s.step = 1
+        s.step = 0
+        assertEq(s.pendingCustom[0], "my_graph_db")
+    }
+    test("WizardState: selectPreset does NOT clear pendingCustom") {
+        let s = WizardState(questions: [q1])
+        s.setPending(question: 0, text: "typed")
+        s.selectPreset(question: 0, optionIndex: 0)
+        assertEq(s.pendingCustom[0], "typed")
+        assertTrue(s.answers[0] == WizardAnswer.preset(index: 0))
+    }
+    test("WizardState: allAnswered true only when every question answered") {
+        let s = WizardState(questions: [q1, q2])
+        s.selectPreset(question: 0, optionIndex: 0)
+        assertFalse(s.allAnswered)
+        s.commitCustom(question: 1, text: "y")
+        assertTrue(s.allAnswered)
+    }
+    test("WizardState: isReviewStep only when step == questions.count AND count > 1") {
+        let s1 = WizardState(questions: [q1])
+        s1.step = 0
+        assertFalse(s1.isReviewStep)
+        let s2 = WizardState(questions: [q1, q2])
+        s2.step = 2
+        assertTrue(s2.isReviewStep)
+    }
+    test("WizardState: lastStep index depends on question count") {
+        assertEq(WizardState(questions: [q1]).lastStep, 0)
+        assertEq(WizardState(questions: [q1, q2]).lastStep, 2)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MARK: - Main Entry Point
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1439,6 +1513,7 @@ enum ApproveTests {
     static func main() {
         testWizardTypes()
         testParseWizardQuestions()
+        testWizardState()
         testBuildGist()
         testLastComponent()
         testSummarizeBashCommand()
