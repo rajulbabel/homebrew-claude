@@ -2149,7 +2149,7 @@ func animateButtonPress(_ button: NSView, restFillColor: NSColor? = nil) {
 /// Tracks which option the user selected via `result`, prevents double-press via `pressing`,
 /// and drives both click and keyboard-shortcut code paths through `animatePress(index:)`.
 /// When the deny button (with `textInput`) is clicked, it morphs into an inline text field.
-final class ButtonHandler: NSObject, NSTextFieldDelegate {
+final class ButtonHandler: NSObject, NSTextFieldDelegate, NSTextViewDelegate {
     let options: [PermOption]
     /// The `resultKey` of the selected `PermOption`. Defaults to `"deny"` (safe fallback).
     var result: String = "deny"
@@ -2158,7 +2158,9 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate {
     var buttons: [NSButton] = []
     private var pressing = false
     var textInputActive = false
-    private var activeTextField: NSTextField?
+    // Held onto so submitTextInput can read the typed string. Swapped from
+    // NSTextField to NSTextView + NSScrollView to support Shift+Return newlines.
+    private var activeTextView: NSTextView?
 
     init(options: [PermOption]) {
         self.options = options
@@ -2193,6 +2195,7 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate {
 
     /// Morphs the deny button into a text field + Send button.
     private func morphToTextField(index: Int) {
+        guard !pressing, index >= 0, index < buttons.count else { return }
         let button = buttons[index]
         let option = options[index]
         guard let superview = button.superview else { return }
@@ -2200,7 +2203,6 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate {
         let frame = button.frame
         let tint = option.color
 
-        // Container — same frame/corners, soothing dark background + color-matched border
         let container = NSView(frame: frame)
         container.wantsLayer = true
         container.layer?.cornerRadius = Layout.buttonCornerRadius
@@ -2210,15 +2212,14 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate {
         container.alphaValue = 0
         superview.addSubview(container)
 
-        // Send button
+        // Send button pinned to the right edge.
         let sendW = Layout.morphSendWidth
         let sendH = Layout.morphSendHeight
         let sendMargin = Layout.morphSendMargin
         let sendBtn = NSButton(frame: NSRect(
             x: frame.width - sendW - sendMargin,
             y: (frame.height - sendH) / 2,
-            width: sendW, height: sendH
-        ))
+            width: sendW, height: sendH))
         sendBtn.title = "Send ⏎"
         sendBtn.alignment = .center
         sendBtn.bezelStyle = .rounded
@@ -2233,37 +2234,60 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate {
         sendBtn.action = #selector(ButtonHandler.sendClicked(_:))
         container.addSubview(sendBtn)
 
-        // Text field — vertically centered using font metrics
+        // Multi-line text view inside a scroll view. Mirrors WizardOtherRow.
         let leftPad = Layout.morphTextPaddingLeft
         let rightPad = sendW + sendMargin * 2
-        let lineHeight = ceil(Theme.morphInputFont.ascender - Theme.morphInputFont.descender + Theme.morphInputFont.leading)
-        let tfHeight = lineHeight + 4
-        let tf = NSTextField(frame: NSRect(
-            x: leftPad, y: (frame.height - tfHeight) / 2 - 1,
-            width: frame.width - leftPad - rightPad, height: tfHeight
-        ))
-        tf.placeholderAttributedString = NSAttributedString(
-            string: option.placeholder,
-            attributes: [
-                .foregroundColor: Theme.morphPlaceholder,
-                .font: Theme.morphInputFont,
-            ]
-        )
-        tf.stringValue = ""
-        tf.alignment = .left
-        tf.font = Theme.morphInputFont
-        tf.textColor = Theme.morphText
-        tf.backgroundColor = .clear
-        tf.drawsBackground = false
-        tf.isBordered = false
-        tf.isEditable = true
-        tf.focusRingType = .none
-        tf.delegate = self
-        tf.tag = index
-        container.addSubview(tf)
-        activeTextField = tf
 
-        // Animate: button fades out, container fades in
+        let textContainer = NSTextContainer(size: NSSize(
+            width: 0, height: CGFloat.greatestFiniteMagnitude))
+        textContainer.widthTracksTextView = true
+        let storage = NSTextStorage()
+        let manager = NSLayoutManager()
+        storage.addLayoutManager(manager)
+        manager.addTextContainer(textContainer)
+
+        let textView = NSTextView(frame: .zero, textContainer: textContainer)
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = Theme.morphInputFont
+        textView.textColor = Theme.morphText
+        textView.insertionPointColor = tint
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.delegate = self
+        textView.textContainerInset = NSSize(width: 0, height: 2)
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                  height: CGFloat.greatestFiniteMagnitude)
+        textView.autoresizingMask = [.width]
+        textView.identifier = NSUserInterfaceItemIdentifier(String(index))
+
+        let scrollHeight = frame.height - 8
+        let scrollView = NSScrollView(frame: NSRect(
+            x: leftPad, y: 4,
+            width: frame.width - leftPad - rightPad, height: scrollHeight))
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.documentView = textView
+
+        // Placeholder label — hidden once typing starts.
+        let placeholder = NSTextField(labelWithString: option.placeholder)
+        placeholder.font = Theme.morphInputFont
+        placeholder.textColor = Theme.morphPlaceholder
+        placeholder.frame = NSRect(
+            x: leftPad, y: (frame.height - 14) / 2,
+            width: frame.width - leftPad - rightPad, height: 14)
+        placeholder.identifier = NSUserInterfaceItemIdentifier("morph-placeholder")
+        container.addSubview(placeholder)
+        container.addSubview(scrollView)
+
+        activeTextView = textView
+
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.2
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -2271,7 +2295,7 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate {
             container.animator().alphaValue = 1
         }, completionHandler: {
             button.isHidden = true
-            superview.window?.makeFirstResponder(tf)
+            superview.window?.makeFirstResponder(textView)
         })
     }
 
@@ -2279,7 +2303,7 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate {
         guard index >= 0, index < options.count else { return }
         pressing = true
         result = options[index].resultKey
-        feedbackText = activeTextField?.stringValue ?? ""
+        feedbackText = activeTextView?.string ?? ""
         NSApp.stopModal()
     }
 
@@ -2298,6 +2322,44 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate {
             return true
         }
         return false
+    }
+
+    // NSTextViewDelegate — handles commands from the morphed multi-line input.
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            let shift = NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false
+            if shift {
+                textView.insertText("\n", replacementRange: textView.selectedRange())
+            } else {
+                let idx = Int(textView.identifier?.rawValue ?? "") ?? 0
+                submitTextInput(index: idx)
+            }
+            return true
+        }
+        if commandSelector == #selector(NSResponder.insertLineBreak(_:)) ||
+           commandSelector == #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)) {
+            textView.insertText("\n", replacementRange: textView.selectedRange())
+            return true
+        }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            pressing = true
+            let idx = Int(textView.identifier?.rawValue ?? "") ?? 0
+            result = options[idx].resultKey
+            feedbackText = ""
+            NSApp.stopModal()
+            return true
+        }
+        return false
+    }
+
+    func textDidChange(_ notification: Notification) {
+        guard let tv = activeTextView, let container = tv.enclosingScrollView?.superview else { return }
+        if let placeholder = container.subviews.first(where: {
+            $0.identifier == NSUserInterfaceItemIdentifier("morph-placeholder")
+        }) {
+            placeholder.isHidden = !tv.string.isEmpty
+        }
+        tv.scrollRangeToVisible(tv.selectedRange())
     }
 
     /// Direct press — skips textInput morph. Used by Enter/Esc keyboard shortcuts.
