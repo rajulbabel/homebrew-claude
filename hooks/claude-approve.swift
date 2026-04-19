@@ -2630,6 +2630,258 @@ func buildWizardOptionRow(label: String, description: String, selected: Bool, in
     return container
 }
 
+/// The "Other" row of a question panel. Rest state mirrors a preset row;
+/// active state morphs the label cell into a multi-line editable text area.
+///
+/// The controller owns an instance per wizard run (one for each question's
+/// panel) and calls:
+///   - `activate()` to enter typing mode and focus the text view.
+///   - `deactivate()` to return to rest state (text is preserved).
+///   - `currentText` to read what the user has typed.
+///   - `setText(_:)` to restore typed text when navigating back to a question.
+///
+/// The row calls back to the controller via four closures:
+///   - `onActivate`: user clicked or pressed the row's number — controller
+///      flips state and re-renders.
+///   - `onSubmit`: user pressed Return while typing — controller advances.
+///   - `onEscape`: user pressed Esc while typing — controller deactivates
+///      and returns to option-selection mode.
+///   - `onTextChange(String)`: every keystroke — controller saves to
+///      `pendingCustom` and re-evaluates Submit-enabled.
+final class WizardOtherRow: NSView, NSTextViewDelegate {
+
+    // Dependencies injected by the controller.
+    var onActivate: () -> Void = {}
+    var onSubmit: () -> Void = {}
+    var onEscape: () -> Void = {}
+    var onTextChange: (String) -> Void = { _ in }
+
+    /// Bound number shown on the right (1-based); 0 hides.
+    var indexNumber: Int = 0
+
+    /// Is this row the currently selected option in its question?
+    private(set) var selected: Bool = false
+
+    /// Is the text view currently accepting input?
+    private(set) var isActive: Bool = false
+
+    private let scrollView: NSScrollView
+    private let textView: NSTextView
+    private var labelField: NSTextField!
+    private var descField: NSTextField!
+    private var radioView: NSView!
+
+    /// Current string contents of the text view.
+    var currentText: String { textView.string }
+
+    init() {
+        let container = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        container.widthTracksTextView = true
+        let storage = NSTextStorage()
+        let manager = NSLayoutManager()
+        storage.addLayoutManager(manager)
+        manager.addTextContainer(container)
+
+        self.textView = NSTextView(frame: .zero, textContainer: container)
+        self.scrollView = NSScrollView(frame: .zero)
+        super.init(frame: NSRect(x: 0, y: 0,
+            width: Layout.panelWidth - Layout.wizardBodyPaddingH * 2,
+            height: Layout.wizardRowHeightMin))
+
+        wantsLayer = true
+        layer?.cornerRadius = Layout.wizardRowCornerRadius
+        layer?.backgroundColor = Theme.wizardRowBg.cgColor
+        layer?.borderColor = Theme.wizardRowBorder.cgColor
+        layer?.borderWidth = 1
+
+        buildRest()
+        buildTextView()
+        updateVisibility()
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    /// Marks the row as selected (radio filled, selected colors) but leaves
+    /// it in rest state. Call `activate()` additionally to start typing.
+    func setSelected(_ on: Bool) {
+        selected = on
+        refreshColors()
+    }
+
+    /// Enter typing mode — swap rest view for text view and move first responder
+    /// into the text view.
+    func activate() {
+        isActive = true
+        setSelected(true)
+        updateVisibility()
+        window?.makeFirstResponder(textView)
+    }
+
+    /// Return to rest state (text preserved, first responder surrendered).
+    /// Selection state is unchanged.
+    func deactivate() {
+        isActive = false
+        updateVisibility()
+        window?.makeFirstResponder(nil)
+    }
+
+    /// Replace text view contents (used when navigating back to a question
+    /// where the user previously typed something).
+    func setText(_ text: String) {
+        textView.string = text
+        refreshHeight()
+    }
+
+    // MARK: Subview construction
+
+    private func buildRest() {
+        // Radio
+        radioView = NSView(frame: NSRect(
+            x: Layout.wizardRowPaddingH,
+            y: (Layout.wizardRowHeightMin - Layout.wizardRadioSize) / 2,
+            width: Layout.wizardRadioSize,
+            height: Layout.wizardRadioSize))
+        radioView.wantsLayer = true
+        radioView.layer?.cornerRadius = Layout.wizardRadioSize / 2
+        radioView.layer?.borderWidth = Layout.wizardRadioBorderWidth
+        addSubview(radioView)
+
+        let textX = Layout.wizardRowPaddingH + Layout.wizardRadioSize + Layout.wizardRadioGap
+        let textWidth = frame.width - textX - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth
+
+        labelField = NSTextField(labelWithString: "Other")
+        labelField.font = Theme.wizardLabelFont
+        labelField.textColor = Theme.textPrimary
+        labelField.frame = NSRect(x: textX, y: Layout.wizardRowLabelY,
+                                  width: textWidth, height: Layout.wizardRowLabelHeight)
+        addSubview(labelField)
+
+        descField = NSTextField(labelWithString: "Type your own answer")
+        descField.font = Theme.wizardDescFont
+        descField.textColor = Theme.textSecondary
+        descField.frame = NSRect(x: textX, y: Layout.wizardRowDescY,
+                                 width: textWidth, height: Layout.wizardRowDescHeight)
+        addSubview(descField)
+
+        refreshColors()
+
+        // Whole-row click → activate
+        let click = NSClickGestureRecognizer(target: self, action: #selector(rowClicked))
+        addGestureRecognizer(click)
+    }
+
+    private func buildTextView() {
+        let textX = Layout.wizardRowPaddingH + Layout.wizardRadioSize + Layout.wizardRadioGap
+        let textWidth = frame.width - textX - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth
+
+        scrollView.frame = NSRect(x: textX, y: 4, width: textWidth, height: Layout.wizardOtherMinHeight)
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = Theme.wizardOtherTextFont
+        textView.textColor = Theme.textPrimary
+        textView.insertionPointColor = Theme.buttonAllow
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.delegate = self
+        textView.textContainerInset = NSSize(width: 0, height: 2)
+        textView.autoresizingMask = [.width]
+
+        scrollView.documentView = textView
+        addSubview(scrollView)
+    }
+
+    @objc private func rowClicked() {
+        onActivate()
+    }
+
+    private func updateVisibility() {
+        labelField.isHidden = isActive
+        descField.stringValue = isActive ? "Type your own answer" : "Type your own answer"
+        scrollView.isHidden = !isActive
+        refreshHeight()
+    }
+
+    private func refreshColors() {
+        layer?.backgroundColor = (selected ? Theme.wizardRowSelectedBg : Theme.wizardRowBg).cgColor
+        layer?.borderColor = (selected ? Theme.wizardRowSelectedBorder : Theme.wizardRowBorder).cgColor
+        if selected {
+            radioView.layer?.borderColor = Theme.buttonAllow.cgColor
+            radioView.layer?.backgroundColor = Theme.buttonAllow.cgColor
+            radioView.subviews.forEach { $0.removeFromSuperview() }
+            let ring = NSView(frame: NSRect(
+                x: Layout.wizardRadioInnerRing, y: Layout.wizardRadioInnerRing,
+                width: Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2,
+                height: Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2))
+            ring.wantsLayer = true
+            ring.layer?.backgroundColor = Theme.wizardRadioInnerGap.cgColor
+            ring.layer?.cornerRadius = ring.frame.width / 2
+            radioView.addSubview(ring)
+        } else {
+            radioView.layer?.borderColor = Theme.textSecondary.withAlphaComponent(0.55).cgColor
+            radioView.layer?.backgroundColor = NSColor.clear.cgColor
+            radioView.subviews.forEach { $0.removeFromSuperview() }
+        }
+    }
+
+    /// Recalculates row height based on text content when active.
+    /// Caps at `wizardOtherMaxHeight`; scroll view starts scrolling beyond that.
+    private func refreshHeight() {
+        guard isActive else {
+            setFrameSize(NSSize(width: frame.width, height: Layout.wizardRowHeightMin))
+            return
+        }
+        textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+        let used = textView.layoutManager?.usedRect(for: textView.textContainer!) ?? .zero
+        let contentHeight = max(Layout.wizardOtherMinHeight, ceil(used.height) + 4)
+        let capped = min(contentHeight, Layout.wizardOtherMaxHeight)
+        let rowHeight = max(Layout.wizardRowHeightMin,
+            capped + (Layout.wizardRowHeightMin - Layout.wizardOtherMinHeight))
+        setFrameSize(NSSize(width: frame.width, height: rowHeight))
+
+        // Re-center radio; shift scroll view frame
+        radioView.frame.origin.y = (rowHeight - Layout.wizardRadioSize) / 2
+        let textX = Layout.wizardRowPaddingH + Layout.wizardRadioSize + Layout.wizardRadioGap
+        let textWidth = frame.width - textX - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth
+        scrollView.frame = NSRect(x: textX, y: 4, width: textWidth, height: capped)
+        scrollView.hasVerticalScroller = (contentHeight > Layout.wizardOtherMaxHeight)
+        // Description sits below text, center-align logic only in rest mode;
+        // in active mode we hide descField in updateVisibility() via isHidden check.
+    }
+
+    // MARK: NSTextViewDelegate
+
+    func textDidChange(_ notification: Notification) {
+        onTextChange(textView.string)
+        refreshHeight()
+    }
+
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            // Return → submit. Shift+Return sends insertNewlineIgnoringFieldEditor
+            // or insertLineBreak, both of which we let through to default behavior
+            // (they insert a newline via the text storage).
+            onSubmit()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.insertLineBreak(_:)) ||
+           commandSelector == #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)) {
+            textView.insertText("\n", replacementRange: textView.selectedRange())
+            return true
+        }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            onEscape()
+            return true
+        }
+        return false
+    }
+}
+
 // MARK: - Dialog Construction
 
 /// Builds and runs the permission dialog, returning the user's selected result key.
