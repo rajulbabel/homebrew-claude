@@ -2426,6 +2426,46 @@ final class WizardState {
     }
 }
 
+/// Builds the `permissionDecisionReason` string that Claude reads as feedback
+/// when the user submits answers via the wizard.
+///
+/// Layout (one block per question, separated by a blank line):
+/// ```
+///   1. [HEADER] Question text?
+///      → answer line (option label — description, OR custom text)
+/// ```
+/// Multi-line custom answers preserve their newlines; continuation lines are
+/// indented four spaces so they line up under the `→` marker.
+///
+/// Unanswered questions render `→ (no answer)` — should not normally occur
+/// because Submit is disabled until all answers are present, but the safety
+/// branch keeps the output unambiguous if a submission ever happens anyway.
+func formatWizardAnswers(state: WizardState) -> String {
+    var lines: [String] = ["User answered inline via dialog:", ""]
+    for (i, q) in state.questions.enumerated() {
+        let headerPart = q.header.isEmpty ? "" : "[\(q.header)] "
+        lines.append("\(i + 1). \(headerPart)\(q.question)")
+        switch state.answers[i] {
+        case .preset(let idx):
+            let opt = q.options[idx]
+            let suffix = opt.description.isEmpty ? "" : " — \(opt.description)"
+            lines.append("   → \(opt.label)\(suffix)")
+        case .custom(let text):
+            let parts = text.components(separatedBy: "\n")
+            lines.append("   → \(parts[0])")
+            for cont in parts.dropFirst() {
+                lines.append("     \(cont)")
+            }
+        case .none:
+            lines.append("   → (no answer)")
+        }
+        lines.append("")
+    }
+    // Drop trailing blank line
+    if lines.last == "" { lines.removeLast() }
+    return lines.joined(separator: "\n")
+}
+
 // MARK: - Dialog Construction
 
 /// Builds and runs the permission dialog, returning the user's selected result key.

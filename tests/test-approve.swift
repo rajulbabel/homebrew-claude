@@ -1504,6 +1504,59 @@ func testWizardState() {
     }
 }
 
+func testFormatWizardAnswers() {
+    let q1 = WizardQuestion(
+        header: "DB", question: "Which database?",
+        options: [WizardOption(label: "Postgres", description: "SQL"),
+                  WizardOption(label: "SQLite", description: "Embedded")])
+    let q2 = WizardQuestion(
+        header: "TEST", question: "Run tests?",
+        options: [WizardOption(label: "Yes", description: ""),
+                  WizardOption(label: "No", description: "")])
+
+    test("formatWizardAnswers: single preset") {
+        let s = WizardState(questions: [q1])
+        s.selectPreset(question: 0, optionIndex: 1)
+        let out = formatWizardAnswers(state: s)
+        assertContains(out, "User answered inline via dialog:")
+        assertContains(out, "1. [DB] Which database?")
+        assertContains(out, "→ SQLite")
+        assertContains(out, "Embedded")
+    }
+    test("formatWizardAnswers: custom answer") {
+        let s = WizardState(questions: [q1])
+        s.commitCustom(question: 0, text: "my_graph_db")
+        let out = formatWizardAnswers(state: s)
+        assertContains(out, "→ my_graph_db")
+    }
+    test("formatWizardAnswers: multi-line custom preserves newlines with indent") {
+        let s = WizardState(questions: [q1])
+        s.commitCustom(question: 0, text: "line one\nline two\nline three")
+        let out = formatWizardAnswers(state: s)
+        assertContains(out, "→ line one")
+        // continuation lines should be indented 4 spaces to visually group under →
+        assertContains(out, "    line two")
+        assertContains(out, "    line three")
+    }
+    test("formatWizardAnswers: multiple questions numbered sequentially") {
+        let s = WizardState(questions: [q1, q2])
+        s.selectPreset(question: 0, optionIndex: 0)
+        s.selectPreset(question: 1, optionIndex: 0)
+        let out = formatWizardAnswers(state: s)
+        assertContains(out, "1. [DB]")
+        assertContains(out, "2. [TEST]")
+        assertContains(out, "Postgres")
+        assertContains(out, "Yes")
+    }
+    test("formatWizardAnswers: unanswered question rendered as (no answer)") {
+        let s = WizardState(questions: [q1, q2])
+        s.selectPreset(question: 0, optionIndex: 0)
+        let out = formatWizardAnswers(state: s)
+        assertContains(out, "2. [TEST]")
+        assertContains(out, "→ (no answer)")
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // MARK: - Main Entry Point
 // ═══════════════════════════════════════════════════════════════════
@@ -1514,6 +1567,7 @@ enum ApproveTests {
         testWizardTypes()
         testParseWizardQuestions()
         testWizardState()
+        testFormatWizardAnswers()
         testBuildGist()
         testLastComponent()
         testSummarizeBashCommand()
