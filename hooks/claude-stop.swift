@@ -405,6 +405,67 @@ private func activateStopPanel(_ panel: NSPanel) {
     panel.makeKeyAndOrderFront(nil)
 }
 
+/// Keeps `panel` as the key window across every scenario that can cause it
+/// to lose focus: Space switches, app re-foregrounding, screen wake, and the
+/// initial-present settle. Returns a cleanup closure the caller invokes from
+/// a `defer { }` when the dialog is torn down.
+///
+/// Each observer asyncs to the next main-loop tick before re-activating so
+/// the window-server finishes its own transition first. If the panel is
+/// already not-visible, the async block early-exits.
+///
+/// `didResignKeyNotification` is intentionally NOT observed — re-taking key
+/// immediately when the user clicks elsewhere would fight legitimate user
+/// intent. Focus returns on the next refocus event (app re-active, space
+/// change, etc.).
+func installFocusRecoveryObservers(on panel: NSPanel) -> () -> Void {
+    let workspaceCenter = NSWorkspace.shared.notificationCenter
+    let appCenter = NotificationCenter.default
+
+    let reactivate: () -> Void = { [weak panel] in
+        DispatchQueue.main.async {
+            guard let p = panel, p.isVisible else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            p.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    let spaceObs = workspaceCenter.addObserver(
+        forName: NSWorkspace.activeSpaceDidChangeNotification,
+        object: nil, queue: .main
+    ) { _ in reactivate() }
+
+    let appActiveObs = appCenter.addObserver(
+        forName: NSApplication.didBecomeActiveNotification,
+        object: nil, queue: .main
+    ) { _ in reactivate() }
+
+    let screenWakeObs = workspaceCenter.addObserver(
+        forName: NSWorkspace.screensDidWakeNotification,
+        object: nil, queue: .main
+    ) { _ in reactivate() }
+
+    let windowKeyObs = appCenter.addObserver(
+        forName: NSWindow.didBecomeKeyNotification,
+        object: panel, queue: .main
+    ) { _ in /* no-op; used only to hold a strong ref until cleanup */ }
+
+    // Initial-present settle: if the first orderFront didn't pick up key,
+    // try once more after a short delay.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak panel] in
+        guard let p = panel, p.isVisible, !p.isKeyWindow else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        p.makeKeyAndOrderFront(nil)
+    }
+
+    return {
+        workspaceCenter.removeObserver(spaceObs)
+        workspaceCenter.removeObserver(screenWakeObs)
+        appCenter.removeObserver(appActiveObs)
+        appCenter.removeObserver(windowKeyObs)
+    }
+}
+
 /// Resolves the terminal TTY and parent GUI application in a single pass.
 ///
 /// Snapshots the full process table with one `ps` call, then walks from the hook
