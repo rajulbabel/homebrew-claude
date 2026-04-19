@@ -2695,6 +2695,11 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     var onSubmit: () -> Void = {}
     var onEscape: () -> Void = {}
     var onTextChange: (String) -> Void = { _ in }
+    /// Fires when the row's height changes. The `delta` is the signed change
+    /// relative to the previous height. Controller shifts siblings + resizes
+    /// the panel in response. Never torn-down mid-call — receiver adjusts
+    /// frames in place so no view destruction happens during typing.
+    var onRowHeightChange: (_ delta: CGFloat) -> Void = { _ in }
 
     /// Bound number shown on the right (1-based); 0 hides.
     /// Setter refreshes the rendered index field.
@@ -2932,13 +2937,24 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
         refreshIndex()
     }
 
-    /// Row height is two-state: collapsed (wizardRowHeightMin) when inactive,
-    /// expanded (wizardOtherActiveRowHeight) when the text field is accepting
-    /// input. Typing never changes the row height — the scroll view inside
-    /// handles overflow. The panel is only re-rendered on activate/deactivate.
+    /// Row height scales with content when active, down to wizardRowHeightMin
+    /// for short answers and up to wizardOtherActiveRowHeight for long ones
+    /// (content beyond that scrolls inside the text view). Inactive state is
+    /// always wizardRowHeightMin. The delta is broadcast via `onRowHeightChange`
+    /// so the controller can grow/shrink the panel in place without rebuilding.
     private func refreshHeight() {
-        let rowHeight = isActive ? Layout.wizardOtherActiveRowHeight
-                                 : Layout.wizardRowHeightMin
+        let oldHeight = frame.height
+        let rowHeight: CGFloat
+        if isActive {
+            textView.layoutManager?.ensureLayout(for: textView.textContainer!)
+            let used = textView.layoutManager?.usedRect(for: textView.textContainer!) ?? .zero
+            let content = ceil(used.height) + 4
+            let desired = content + Layout.wizardOtherActivePaddingV * 2
+            rowHeight = min(Layout.wizardOtherActiveRowHeight,
+                            max(Layout.wizardRowHeightMin, desired))
+        } else {
+            rowHeight = Layout.wizardRowHeightMin
+        }
         setFrameSize(NSSize(width: frame.width, height: rowHeight))
 
         // Re-center radio and scroll view vertically within the current row.
@@ -2956,14 +2972,16 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
         idxField.frame.origin.y = (rowHeight - Layout.wizardRowIndexHeight) / 2
         labelField.frame.origin.y = isActive ? 0 : Layout.wizardRowLabelY
         descField.frame.origin.y = isActive ? 0 : Layout.wizardRowDescY
+
+        let delta = rowHeight - oldHeight
+        if delta != 0 { onRowHeightChange(delta) }
     }
 
     // MARK: NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
         onTextChange(textView.string)
-        // Scroll to keep the caret visible as the user types past the
-        // visible area. Row height itself does not change on typing.
+        refreshHeight()
         textView.scrollRangeToVisible(textView.selectedRange())
     }
 
@@ -2998,6 +3016,10 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
 /// event targets and later update selected state and Submit-enabled.
 struct WizardQuestionPanelHandles {
     let root: NSView
+    let header: NSView                  // top band; shifts when body grows
+    let body: NSView                    // content area; resizes with Other row
+    let pill: NSButton                  // category tag
+    let questionField: NSTextField
     let optionRowViews: [NSView]        // preset rows only (not the Other row)
     let otherRow: WizardOtherRow
     let backButton: NSButton
@@ -3021,8 +3043,7 @@ func buildWizardQuestionPanel(
     question: WizardQuestion,
     stepIndex: Int,
     totalSteps: Int,
-    isLastStep: Bool,
-    otherExpanded: Bool = false
+    isLastStep: Bool
 ) -> WizardQuestionPanelHandles {
     let width = Layout.panelWidth
     let root = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 100))
@@ -3115,12 +3136,10 @@ func buildWizardQuestionPanel(
     let pillTopY = Layout.wizardBodyPaddingV
     let qTopY = pillTopY + Layout.wizardPillHeight + Layout.wizardBodyGapAfterPill
     let rowTopY = qTopY + qHeight + Layout.wizardBodyGapAfterQuestion
-    // Reserve space for option rows + other row + progress dots.
-    // Other row uses its expanded height when the text field is active.
-    let otherRowHeight = otherExpanded ? Layout.wizardOtherActiveRowHeight
-                                       : Layout.wizardRowHeightMin
-    let totalRowsHeight = CGFloat(question.options.count) * Layout.wizardRowHeightMin
-        + otherRowHeight
+    // All rows start at `wizardRowHeightMin`. The Other row grows itself at
+    // runtime when the user activates it and types; the controller shifts
+    // siblings + resizes the panel in response to `onRowHeightChange`.
+    let totalRowsHeight = CGFloat(question.options.count + 1) * Layout.wizardRowHeightMin
         + CGFloat(question.options.count) * Layout.wizardRowGap
     let progressAreaHeight: CGFloat = Layout.wizardProgressTopPadding +
         Layout.wizardProgressDotHeight
@@ -3137,19 +3156,14 @@ func buildWizardQuestionPanel(
             width: width - Layout.wizardBodyPaddingH * 2, height: Layout.wizardRowHeightMin)
         yCursor -= (Layout.wizardRowHeightMin + Layout.wizardRowGap)
     }
-    // Other row's top stays where a 44-high row would have started; its bottom
-    // extends further down when expanded. Resizing the row here ensures its
-    // internal refreshHeight-driven layout (radio centering, scroll view frame)
-    // matches the row frame we just assigned.
-    let otherY = yCursor - (otherRowHeight - Layout.wizardRowHeightMin)
-    otherRow.frame = NSRect(x: Layout.wizardBodyPaddingH, y: otherY,
-        width: width - Layout.wizardBodyPaddingH * 2, height: otherRowHeight)
+    otherRow.frame = NSRect(x: Layout.wizardBodyPaddingH, y: yCursor,
+        width: width - Layout.wizardBodyPaddingH * 2, height: Layout.wizardRowHeightMin)
 
-    // Progress dots centered below the (possibly expanded) Other row.
+    // Progress dots centered below Other row.
     let dotsTotalWidth = CGFloat(totalSteps) * Layout.wizardProgressDotWidth +
         CGFloat(max(0, totalSteps - 1)) * Layout.wizardProgressDotGap
     var dx = (width - dotsTotalWidth) / 2
-    let dotY = otherY - Layout.wizardProgressTopPadding - Layout.wizardProgressDotHeight
+    let dotY = yCursor - Layout.wizardProgressTopPadding - Layout.wizardProgressDotHeight
     for dot in progressDots {
         dot.frame.origin = NSPoint(x: dx, y: dotY)
         dx += Layout.wizardProgressDotWidth + Layout.wizardProgressDotGap
@@ -3215,6 +3229,10 @@ func buildWizardQuestionPanel(
 
     return WizardQuestionPanelHandles(
         root: root,
+        header: header,
+        body: body,
+        pill: pill,
+        questionField: qField,
         optionRowViews: optionRowViews,
         otherRow: otherRow,
         backButton: back,
@@ -3555,8 +3573,7 @@ final class WizardController: NSObject {
         let h = buildWizardQuestionPanel(
             question: q, stepIndex: qIndex,
             totalSteps: state.questions.count,
-            isLastStep: isLast,
-            otherExpanded: otherActive)
+            isLastStep: isLast)
         container.addSubview(h.root)
         resizePanelToFit(rootHeight: h.root.frame.height)
         currentQuestionHandles = h
@@ -3641,6 +3658,9 @@ final class WizardController: NSObject {
         }
         h.otherRow.onSubmit = { [weak self] in self?.advance() }
         h.otherRow.onEscape = { [weak self] in self?.exitOtherEditing() }
+        h.otherRow.onRowHeightChange = { [weak self] delta in
+            self?.applyOtherRowDelta(delta)
+        }
 
         h.backButton.target = self
         h.backButton.action = #selector(onBack)
@@ -3752,10 +3772,11 @@ final class WizardController: NSObject {
         renderCurrentStep()
     }
 
-    /// Expands the Other row for typing and triggers a panel re-render so
-    /// the layout accommodates its larger height. The re-render itself puts
-    /// focus back on the text view.
+    /// Expands the Other row for typing — the row itself adjusts its height
+    /// via `refreshHeight` and broadcasts a delta the controller applies to
+    /// siblings + panel in `applyOtherRowDelta`. No full re-render.
     private func activateOther(questionIndex qi: Int) {
+        guard let h = currentQuestionHandles else { return }
         if otherActive { return }
         otherActive = true
         // Pre-commit existing pending text so Submit-enabled reflects reality.
@@ -3763,15 +3784,37 @@ final class WizardController: NSObject {
         if !text.isEmpty {
             state.commitCustom(question: qi, text: text)
         }
-        renderCurrentStep()
+        applySelectionFromState(h, questionIndex: qi)
+        applyProgress(dots: h.progressDots)
+        recomputePrimaryEnabled()
+        h.otherRow.activate()
+        h.otherRow.moveCaretToEnd()
     }
 
     /// Collapses the Other row back to rest height. Pending text stays in
     /// state and is displayed as the row's summary label.
     private func exitOtherEditing() {
+        guard let h = currentQuestionHandles else { return }
         if !otherActive { return }
         otherActive = false
-        renderCurrentStep()
+        h.otherRow.deactivate()
+        applySelectionFromState(h, questionIndex: state.step)
+        recomputePrimaryEnabled()
+    }
+
+    /// Applies a row-height delta in place: shifts siblings upward in body-
+    /// local coordinates (so their world positions stay fixed), extends
+    /// body/root, and grows the panel. No view hierarchy is torn down, so
+    /// this is safe to call from inside the text view's own delegate.
+    private func applyOtherRowDelta(_ delta: CGFloat) {
+        guard let h = currentQuestionHandles, delta != 0 else { return }
+        h.pill.frame.origin.y += delta
+        h.questionField.frame.origin.y += delta
+        for row in h.optionRowViews { row.frame.origin.y += delta }
+        h.body.frame.size.height += delta
+        h.root.frame.size.height += delta
+        h.header.frame.origin.y += delta
+        resizePanelToFit(rootHeight: h.root.frame.height)
     }
 
     private func recomputePrimaryEnabled() {
