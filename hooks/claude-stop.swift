@@ -1341,9 +1341,41 @@ private func animateButtonPress(_ button: NSView) {
 /// After the modal exits, activates the user's terminal if "Go to Terminal" was chosen.
 ///
 /// - Parameter input: Parsed Stop hook input providing project context and last message.
+/// Appends a diagnostic line to `~/.claude/claude-stop.log` every time the
+/// Done dialog is about to show. Intended as a temporary debugging aid —
+/// lets us correlate why the dialog fires in some sessions more than others.
+/// Safe to delete once the cause is understood.
+private func logStopInvocation(_ input: StopInput, gist: String) {
+    let home = NSHomeDirectory()
+    let path = "\(home)/.claude/claude-stop.log"
+    let fmt = ISO8601DateFormatter()
+    fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let ts = fmt.string(from: Date())
+    let ppid = getppid()
+    let gistSnippet = String(gist.prefix(80)).replacingOccurrences(of: "\n", with: " ")
+    let line = """
+    \(ts) | pid=\(getpid()) | ppid=\(ppid) | session=\(input.sessionId) \
+    | active=\(input.stopHookActive) | cwd=\(input.cwd) | gist="\(gistSnippet)"
+
+    """
+    if let data = line.data(using: .utf8) {
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try? handle.close()
+        } else {
+            FileManager.default.createFile(atPath: path, contents: data)
+        }
+    }
+}
+
 private func showStopDialog(input: StopInput) {
     let content = buildStopContent(input.lastMessage)
     let gist    = buildStopGist(input.lastMessage)
+
+    // Diagnostic: record every invocation so we can debug why this dialog
+    // fires more frequently in some sessions than others.
+    logStopInvocation(input, gist: gist)
 
     // Calculate code block height
     let screenH   = NSScreen.main?.visibleFrame.height ?? 800
