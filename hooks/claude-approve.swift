@@ -403,6 +403,10 @@ enum Layout {
     static let wizardOtherMaxHeight: CGFloat = 140
     static let wizardOtherCaretWidth: CGFloat = 1.5
     static let wizardOtherCaretHeight: CGFloat = 12
+    /// Other row height when the text field is active. Large enough for 3-4
+    /// lines; additional text scrolls inside the scroll view.
+    static let wizardOtherActiveRowHeight: CGFloat = 96
+    static let wizardOtherActivePaddingV: CGFloat = 10
 
     /// Spacing breakdown for fixed chrome (everything except code block and buttons).
     static let fixedChrome: CGFloat = panelTopPadding + projectHeight + pathHeight
@@ -2691,11 +2695,6 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     var onSubmit: () -> Void = {}
     var onEscape: () -> Void = {}
     var onTextChange: (String) -> Void = { _ in }
-    /// Fires after the row's height changes so the controller can resize the
-    /// containing panel to fit. Suppressed during programmatic `setText` to
-    /// avoid re-entrant re-renders.
-    var onHeightChange: () -> Void = {}
-    private var suppressHeightCallback = false
 
     /// Bound number shown on the right (1-based); 0 hides.
     /// Setter refreshes the rendered index field.
@@ -2773,10 +2772,8 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     /// Replace text view contents (used when navigating back to a question
     /// where the user previously typed something).
     func setText(_ text: String) {
-        suppressHeightCallback = true
         textView.string = text
-        refreshHeight()
-        suppressHeightCallback = false
+        updateVisibility()
     }
 
     /// Moves the caret to the end of the current text. Used after the
@@ -2784,6 +2781,7 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     func moveCaretToEnd() {
         let len = (textView.string as NSString).length
         textView.setSelectedRange(NSRange(location: len, length: 0))
+        textView.scrollRangeToVisible(NSRange(location: len, length: 0))
     }
 
     // MARK: Subview construction
@@ -2845,12 +2843,20 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
         let textX = Layout.wizardRowPaddingH + Layout.wizardRadioSize + Layout.wizardRadioGap
         let textWidth = frame.width - textX - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth
 
-        scrollView.frame = NSRect(x: textX, y: 4, width: textWidth, height: Layout.wizardOtherMinHeight)
-        scrollView.hasVerticalScroller = false
+        // ScrollView sized for the expanded row; updateVisibility centers it
+        // vertically within whatever row height is current (collapsed/expanded).
+        let scrollHeight = Layout.wizardOtherActiveRowHeight - Layout.wizardOtherActivePaddingV * 2
+        scrollView.frame = NSRect(x: textX, y: Layout.wizardOtherActivePaddingV,
+                                  width: textWidth, height: scrollHeight)
+        scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
 
+        // NSTextView inside NSScrollView needs explicit min/max size and
+        // correct resizing flags; without these the text view doesn't receive
+        // mouse events for selection, and long content can't scroll.
         textView.isEditable = true
         textView.isSelectable = true
         textView.drawsBackground = false
@@ -2861,7 +2867,13 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
         textView.allowsUndo = true
         textView.delegate = self
         textView.textContainerInset = NSSize(width: 0, height: 2)
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                  height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
 
         scrollView.documentView = textView
         addSubview(scrollView)
@@ -2871,10 +2883,29 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
         onActivate()
     }
 
+    /// Returns the first non-empty line of the typed text, or empty string.
+    private var textSummary: String {
+        let trimmed = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "" }
+        return textView.string.components(separatedBy: "\n").first ?? textView.string
+    }
+
     private func updateVisibility() {
         labelField.isHidden = isActive
         descField.isHidden = isActive
         scrollView.isHidden = !isActive
+
+        // Rest state: if the user has typed anything, surface it in the label
+        // (first line, truncated by NSTextField's tail truncation) so they
+        // can see what their custom answer is without re-activating the row.
+        let summary = textSummary
+        if !summary.isEmpty {
+            labelField.stringValue = summary
+            descField.stringValue = "\u{2713} custom"
+        } else {
+            labelField.stringValue = "Other"
+            descField.stringValue = "Type your own answer"
+        }
         refreshHeight()
     }
 
@@ -2901,40 +2932,39 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
         refreshIndex()
     }
 
-    /// Recalculates row height based on text content when active.
-    /// Caps at `wizardOtherMaxHeight`; scroll view starts scrolling beyond that.
-    /// Notifies `onHeightChange` when the height actually changes so the
-    /// controller can resize the panel — unless the change was triggered by a
-    /// programmatic `setText` (which already runs inside a controller render).
+    /// Row height is two-state: collapsed (wizardRowHeightMin) when inactive,
+    /// expanded (wizardOtherActiveRowHeight) when the text field is accepting
+    /// input. Typing never changes the row height — the scroll view inside
+    /// handles overflow. The panel is only re-rendered on activate/deactivate.
     private func refreshHeight() {
-        let oldHeight = frame.height
-        guard isActive else {
-            setFrameSize(NSSize(width: frame.width, height: Layout.wizardRowHeightMin))
-            if frame.height != oldHeight && !suppressHeightCallback { onHeightChange() }
-            return
-        }
-        textView.layoutManager?.ensureLayout(for: textView.textContainer!)
-        let used = textView.layoutManager?.usedRect(for: textView.textContainer!) ?? .zero
-        let contentHeight = max(Layout.wizardOtherMinHeight, ceil(used.height) + 4)
-        let capped = min(contentHeight, Layout.wizardOtherMaxHeight)
-        let rowHeight = max(Layout.wizardRowHeightMin,
-            capped + (Layout.wizardRowHeightMin - Layout.wizardOtherMinHeight))
+        let rowHeight = isActive ? Layout.wizardOtherActiveRowHeight
+                                 : Layout.wizardRowHeightMin
         setFrameSize(NSSize(width: frame.width, height: rowHeight))
 
-        // Re-center radio; shift scroll view frame
+        // Re-center radio and scroll view vertically within the current row.
         radioView.frame.origin.y = (rowHeight - Layout.wizardRadioSize) / 2
+
         let textX = Layout.wizardRowPaddingH + Layout.wizardRadioSize + Layout.wizardRadioGap
         let textWidth = frame.width - textX - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth
-        scrollView.frame = NSRect(x: textX, y: 4, width: textWidth, height: capped)
-        scrollView.hasVerticalScroller = (contentHeight > Layout.wizardOtherMaxHeight)
-        if frame.height != oldHeight && !suppressHeightCallback { onHeightChange() }
+
+        if isActive {
+            let scrollHeight = rowHeight - Layout.wizardOtherActivePaddingV * 2
+            scrollView.frame = NSRect(
+                x: textX, y: Layout.wizardOtherActivePaddingV,
+                width: textWidth, height: scrollHeight)
+        }
+        idxField.frame.origin.y = (rowHeight - Layout.wizardRowIndexHeight) / 2
+        labelField.frame.origin.y = isActive ? 0 : Layout.wizardRowLabelY
+        descField.frame.origin.y = isActive ? 0 : Layout.wizardRowDescY
     }
 
     // MARK: NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {
         onTextChange(textView.string)
-        refreshHeight()
+        // Scroll to keep the caret visible as the user types past the
+        // visible area. Row height itself does not change on typing.
+        textView.scrollRangeToVisible(textView.selectedRange())
     }
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -2991,7 +3021,8 @@ func buildWizardQuestionPanel(
     question: WizardQuestion,
     stepIndex: Int,
     totalSteps: Int,
-    isLastStep: Bool
+    isLastStep: Bool,
+    otherExpanded: Bool = false
 ) -> WizardQuestionPanelHandles {
     let width = Layout.panelWidth
     let root = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 100))
@@ -3084,9 +3115,13 @@ func buildWizardQuestionPanel(
     let pillTopY = Layout.wizardBodyPaddingV
     let qTopY = pillTopY + Layout.wizardPillHeight + Layout.wizardBodyGapAfterPill
     let rowTopY = qTopY + qHeight + Layout.wizardBodyGapAfterQuestion
-    // reserve space for option rows + other row + progress dots
-    let totalRowsHeight = CGFloat(question.options.count + 1) *
-        Layout.wizardRowHeightMin + CGFloat(question.options.count) * Layout.wizardRowGap
+    // Reserve space for option rows + other row + progress dots.
+    // Other row uses its expanded height when the text field is active.
+    let otherRowHeight = otherExpanded ? Layout.wizardOtherActiveRowHeight
+                                       : Layout.wizardRowHeightMin
+    let totalRowsHeight = CGFloat(question.options.count) * Layout.wizardRowHeightMin
+        + otherRowHeight
+        + CGFloat(question.options.count) * Layout.wizardRowGap
     let progressAreaHeight: CGFloat = Layout.wizardProgressTopPadding +
         Layout.wizardProgressDotHeight
     let bodyHeight = rowTopY + totalRowsHeight + progressAreaHeight + Layout.wizardBodyBottomPadding
@@ -3102,14 +3137,19 @@ func buildWizardQuestionPanel(
             width: width - Layout.wizardBodyPaddingH * 2, height: Layout.wizardRowHeightMin)
         yCursor -= (Layout.wizardRowHeightMin + Layout.wizardRowGap)
     }
-    otherRow.frame = NSRect(x: Layout.wizardBodyPaddingH, y: yCursor,
-        width: width - Layout.wizardBodyPaddingH * 2, height: Layout.wizardRowHeightMin)
+    // Other row's top stays where a 44-high row would have started; its bottom
+    // extends further down when expanded. Resizing the row here ensures its
+    // internal refreshHeight-driven layout (radio centering, scroll view frame)
+    // matches the row frame we just assigned.
+    let otherY = yCursor - (otherRowHeight - Layout.wizardRowHeightMin)
+    otherRow.frame = NSRect(x: Layout.wizardBodyPaddingH, y: otherY,
+        width: width - Layout.wizardBodyPaddingH * 2, height: otherRowHeight)
 
-    // Progress dots centered
+    // Progress dots centered below the (possibly expanded) Other row.
     let dotsTotalWidth = CGFloat(totalSteps) * Layout.wizardProgressDotWidth +
         CGFloat(max(0, totalSteps - 1)) * Layout.wizardProgressDotGap
     var dx = (width - dotsTotalWidth) / 2
-    let dotY = yCursor - Layout.wizardProgressTopPadding - Layout.wizardProgressDotHeight
+    let dotY = otherY - Layout.wizardProgressTopPadding - Layout.wizardProgressDotHeight
     for dot in progressDots {
         dot.frame.origin = NSPoint(x: dx, y: dotY)
         dx += Layout.wizardProgressDotWidth + Layout.wizardProgressDotGap
@@ -3478,9 +3518,11 @@ final class WizardController: NSObject {
     private let panel: NSPanel
     private let container: NSView
     private var currentQuestionHandles: WizardQuestionPanelHandles?
-    private var currentReviewHandles: WizardReviewPanelHandles?
     private var outcome: WizardOutcome = .cancel
     private var localKeyMonitor: Any?
+    /// True while the user is editing the current question's Other text field.
+    /// Drives panel layout (expanded row height) and keyboard-routing.
+    private var otherActive: Bool = false
 
     init(state: WizardState, panel: NSPanel, contentContainer: NSView) {
         self.state = state
@@ -3503,36 +3545,34 @@ final class WizardController: NSObject {
         // Clear container
         container.subviews.forEach { $0.removeFromSuperview() }
         currentQuestionHandles = nil
-        currentReviewHandles = nil
 
-        if state.isReviewStep {
-            let h = buildWizardReviewPanel(state: state)
-            container.addSubview(h.root)
-            resizePanelToFit(rootHeight: h.root.frame.height)
-            currentReviewHandles = h
-            wireReviewHandles(h)
-            applyWizardSubmitEnabled(h.submitButton, enabled: state.allAnswered, isSubmit: true)
-            h.backButton.isEnabled = true
-        } else {
-            let qIndex = state.step
-            let q = state.questions[qIndex]
-            let isLast = (state.questions.count == 1)  // single-question wizard → primary is Submit
-            let h = buildWizardQuestionPanel(
-                question: q, stepIndex: qIndex,
-                totalSteps: state.questions.count,
-                isLastStep: isLast)
-            container.addSubview(h.root)
-            resizePanelToFit(rootHeight: h.root.frame.height)
-            currentQuestionHandles = h
-            wireQuestionHandles(h, questionIndex: qIndex)
-            applySelectionFromState(h, questionIndex: qIndex)
-            applyProgress(dots: h.progressDots)
-            // Back disabled on step 0
-            h.backButton.isEnabled = (qIndex > 0)
-            // Primary disabled until current question has an answer
-            applyWizardSubmitEnabled(h.primaryButton,
-                enabled: state.answers[qIndex] != nil,
-                isSubmit: isLast)
+        let qIndex = state.step
+        let q = state.questions[qIndex]
+        // Every question except the last advances with "Next". The last
+        // question's primary button is the final Submit — no separate
+        // review step, matching Claude Code CLI's flow.
+        let isLast = (qIndex == state.questions.count - 1)
+        let h = buildWizardQuestionPanel(
+            question: q, stepIndex: qIndex,
+            totalSteps: state.questions.count,
+            isLastStep: isLast,
+            otherExpanded: otherActive)
+        container.addSubview(h.root)
+        resizePanelToFit(rootHeight: h.root.frame.height)
+        currentQuestionHandles = h
+        wireQuestionHandles(h, questionIndex: qIndex)
+        applySelectionFromState(h, questionIndex: qIndex)
+        applyProgress(dots: h.progressDots)
+        // Back disabled on step 0
+        h.backButton.isEnabled = (qIndex > 0)
+        // Primary disabled until current question has an answer
+        applyWizardSubmitEnabled(h.primaryButton,
+            enabled: state.answers[qIndex] != nil,
+            isSubmit: isLast)
+
+        if otherActive {
+            h.otherRow.activate()
+            h.otherRow.moveCaretToEnd()
         }
     }
 
@@ -3560,19 +3600,17 @@ final class WizardController: NSObject {
             row.layer?.backgroundColor = Theme.wizardRowBg.cgColor
             row.layer?.borderColor = Theme.wizardRowBorder.cgColor
         }
-        // Other row highlight: on when the committed answer is .custom, on while
-        // the text field is active (even if nothing is committed yet), otherwise off.
-        h.otherRow.setSelected(h.otherRow.isActive || {
-            if case .custom = answer { return true } else { return false }
-        }())
+        let isCustom: Bool = { if case .custom = answer { return true } else { return false } }()
+        // Other row highlight: on when the text field is currently active or
+        // when the committed answer is .custom.
+        h.otherRow.setSelected(otherActive || isCustom)
         if case .preset(let idx) = answer, idx < h.optionRowViews.count {
             let row = h.optionRowViews[idx]
             row.layer?.backgroundColor = Theme.wizardRowSelectedBg.cgColor
             row.layer?.borderColor = Theme.wizardRowSelectedBorder.cgColor
-        } else if case .custom = answer {
-            h.otherRow.setSelected(true)
         }
-        // Restore pending custom text
+        // Restore pending custom text into the text view so its summary (in
+        // rest mode) and its contents (in active mode) match state.
         h.otherRow.setText(state.pendingCustom[questionIndex])
     }
 
@@ -3603,7 +3641,6 @@ final class WizardController: NSObject {
         }
         h.otherRow.onSubmit = { [weak self] in self?.advance() }
         h.otherRow.onEscape = { [weak self] in self?.exitOtherEditing() }
-        h.otherRow.onHeightChange = { [weak self] in self?.handleOtherRowGrowth() }
 
         h.backButton.target = self
         h.backButton.action = #selector(onBack)
@@ -3643,11 +3680,17 @@ final class WizardController: NSObject {
     @objc private func onPresetClicked(_ g: WizardClickGesture) {
         guard let h = currentQuestionHandles else { return }
         let qi = state.step
-        h.otherRow.deactivate()
+        let wasOtherActive = otherActive
         state.selectPreset(question: qi, optionIndex: g.payload)
-        applySelectionFromState(h, questionIndex: qi)
-        applyProgress(dots: h.progressDots)
-        recomputePrimaryEnabled()
+        if wasOtherActive {
+            // Collapse Other row before applying selection colors.
+            otherActive = false
+            renderCurrentStep()
+        } else {
+            applySelectionFromState(h, questionIndex: qi)
+            applyProgress(dots: h.progressDots)
+            recomputePrimaryEnabled()
+        }
     }
 
     @objc private func onReviewRowClicked(_ g: WizardClickGesture) {
@@ -3661,18 +3704,13 @@ final class WizardController: NSObject {
     @objc private func onBack() {
         if state.step > 0 {
             state.step -= 1
+            otherActive = false
             renderCurrentStep()
         }
     }
 
     @objc private func onPrimary() {
-        if state.isReviewStep {
-            guard state.allAnswered else { return }
-            outcome = .submit(reason: formatWizardAnswers(state: state))
-            stopModal()
-        } else {
-            advance()
-        }
+        advance()
     }
 
     @objc private func onTerminal() {
@@ -3686,79 +3724,63 @@ final class WizardController: NSObject {
     }
 
     private func advance() {
-        // If at last question and review step exists → go to review
-        // If single question, submit now
         let qi = state.step
         // Promote any typed-but-not-yet-committed Other text so Return submits it.
-        if let h = currentQuestionHandles, h.otherRow.isActive {
+        if let h = currentQuestionHandles, otherActive {
             let text = h.otherRow.currentText
             if !text.isEmpty {
                 state.commitCustom(question: qi, text: text)
             }
         }
         guard state.answers[qi] != nil else { return }
-        if state.questions.count == 1 {
+        if qi == state.questions.count - 1 {
+            // Last question → final submit. Matches Claude Code CLI flow
+            // (no separate review step).
             outcome = .submit(reason: formatWizardAnswers(state: state))
             stopModal()
-            return
-        }
-        if qi < state.questions.count - 1 {
-            state.step = qi + 1
         } else {
-            state.step = state.questions.count  // review
+            state.step = qi + 1
+            otherActive = false
+            renderCurrentStep()
         }
-        renderCurrentStep()
     }
 
     private func jumpTo(step: Int) {
         guard step >= 0 && step < state.questions.count else { return }
         state.step = step
+        otherActive = false
         renderCurrentStep()
     }
 
+    /// Expands the Other row for typing and triggers a panel re-render so
+    /// the layout accommodates its larger height. The re-render itself puts
+    /// focus back on the text view.
     private func activateOther(questionIndex qi: Int) {
-        guard let h = currentQuestionHandles else { return }
-        h.otherRow.activate()
-        // Treat Other as an answer commit only if text is non-empty
-        if !h.otherRow.currentText.isEmpty {
-            state.commitCustom(question: qi, text: h.otherRow.currentText)
+        if otherActive { return }
+        otherActive = true
+        // Pre-commit existing pending text so Submit-enabled reflects reality.
+        let text = state.pendingCustom[qi]
+        if !text.isEmpty {
+            state.commitCustom(question: qi, text: text)
         }
-        applySelectionFromState(h, questionIndex: qi)
-        recomputePrimaryEnabled()
+        renderCurrentStep()
     }
 
+    /// Collapses the Other row back to rest height. Pending text stays in
+    /// state and is displayed as the row's summary label.
     private func exitOtherEditing() {
-        guard let h = currentQuestionHandles else { return }
-        h.otherRow.deactivate()
-    }
-
-    /// Rebuilds the current step so the panel's body and root resize to fit
-    /// the Other row's new height. Deferred to the next run-loop turn so the
-    /// text view's delegate (which triggered the growth) finishes before we
-    /// tear its view hierarchy down. Re-activates Other and restores the caret
-    /// to the end of the text so typing continues smoothly.
-    private func handleOtherRowGrowth() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, let h = self.currentQuestionHandles else { return }
-            let wasActive = h.otherRow.isActive
-            self.renderCurrentStep()
-            if wasActive, let newH = self.currentQuestionHandles {
-                newH.otherRow.activate()
-                newH.otherRow.moveCaretToEnd()
-            }
-        }
+        if !otherActive { return }
+        otherActive = false
+        renderCurrentStep()
     }
 
     private func recomputePrimaryEnabled() {
-        if let h = currentQuestionHandles {
-            applyWizardSubmitEnabled(h.primaryButton,
-                enabled: state.answers[state.step] != nil,
-                isSubmit: state.questions.count == 1)
-        }
-        if let r = currentReviewHandles {
-            applyWizardSubmitEnabled(r.submitButton,
-                enabled: state.allAnswered, isSubmit: true)
-        }
+        guard let h = currentQuestionHandles else { return }
+        let qi = state.step
+        let isLast = (qi == state.questions.count - 1)
+        applyWizardSubmitEnabled(h.primaryButton,
+            enabled: state.answers[qi] != nil,
+            isSubmit: isLast)
     }
 
     private func stopModal() {
@@ -3786,7 +3808,7 @@ final class WizardController: NSObject {
     private func handleKey(_ event: NSEvent) -> Bool {
         // If currently editing Other's text view, all keystrokes belong to the text view
         // EXCEPT Esc (handled by the text view delegate) and Return (handled there too).
-        if let h = currentQuestionHandles, h.otherRow.isActive {
+        if otherActive {
             return false
         }
 
@@ -3826,19 +3848,23 @@ final class WizardController: NSObject {
         switch state.answers[qi] {
         case .preset(let i): current = i
         case .custom:         current = total - 1
-        case .none:           current = -1
+        case .none:           current = otherActive ? (total - 1) : -1
         }
         let next = (current + delta + total) % total
         if next == total - 1 {
-            // Other row — activate but don't auto-type
             activateOther(questionIndex: qi)
         } else {
-            h.otherRow.deactivate()
+            let wasOtherActive = otherActive
             state.selectPreset(question: qi, optionIndex: next)
-            applySelectionFromState(h, questionIndex: qi)
+            if wasOtherActive {
+                otherActive = false
+                renderCurrentStep()
+            } else {
+                applySelectionFromState(h, questionIndex: qi)
+                applyProgress(dots: h.progressDots)
+                recomputePrimaryEnabled()
+            }
         }
-        applyProgress(dots: h.progressDots)
-        recomputePrimaryEnabled()
     }
 
     private func selectOption(byNumber n: Int) {
@@ -3846,14 +3872,19 @@ final class WizardController: NSObject {
         let qi = state.step
         let total = state.questions[qi].options.count
         if n <= total {
-            h.otherRow.deactivate()
+            let wasOtherActive = otherActive
             state.selectPreset(question: qi, optionIndex: n - 1)
-            applySelectionFromState(h, questionIndex: qi)
+            if wasOtherActive {
+                otherActive = false
+                renderCurrentStep()
+            } else {
+                applySelectionFromState(h, questionIndex: qi)
+                applyProgress(dots: h.progressDots)
+                recomputePrimaryEnabled()
+            }
         } else if n == total + 1 {
             activateOther(questionIndex: qi)
         }
-        applyProgress(dots: h.progressDots)
-        recomputePrimaryEnabled()
     }
 }
 
@@ -3910,7 +3941,6 @@ func runAskUserQuestionWizard(questions: [WizardQuestion]) -> WizardOutcome {
     panel.standardWindowButton(.closeButton)?.isHidden = true
     panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
     panel.standardWindowButton(.zoomButton)?.isHidden = true
-    panel.isMovableByWindowBackground = true
     panel.contentView?.wantsLayer = true
     panel.contentView?.layer?.cornerRadius = Layout.wizardPanelCornerRadius
     panel.contentView?.layer?.masksToBounds = true
