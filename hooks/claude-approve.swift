@@ -2525,6 +2525,8 @@ private func addButtonRows(to contentView: NSView, panel: NSPanel, options: [Per
             button.action = #selector(ButtonHandler.clicked(_:))
             contentView.addSubview(button)
             handler.buttons.append(button)
+            applyUnifiedButtonSkin(button, tint: option.color, isDeny: option.resultKey == "deny")
+            addKeyboardBadge(to: button, number: optionIndex + 1, tint: option.color)
 
             if optionIndex == 0 && !option.textInput {
                 panel.defaultButtonCell = button.cell as? NSButtonCell
@@ -2532,6 +2534,52 @@ private func addButtonRows(to contentView: NSView, panel: NSPanel, options: [Per
         }
     }
     handler.buttons.sort { $0.tag < $1.tag }
+}
+
+/// Applies the unified wizard button skin to an NSButton whose frame has
+/// already been set. Only the visual attributes (corner radius, fill,
+/// border, font) change — frame, target, action, tag are untouched.
+private func applyUnifiedButtonSkin(_ button: NSButton,
+                                    tint: NSColor,
+                                    isDeny: Bool = false)
+{
+    button.isBordered = false
+    button.bezelStyle = .rounded
+    button.wantsLayer = true
+    button.layer?.cornerRadius = Layout.wizardRowCornerRadius
+    button.layer?.borderWidth = 1
+    let fillAlpha:   CGFloat = isDeny ? 0.12 : 0.22
+    let borderAlpha: CGFloat = isDeny ? 0.40 : 0.55
+    button.layer?.backgroundColor = tint.withAlphaComponent(fillAlpha).cgColor
+    button.layer?.borderColor     = tint.withAlphaComponent(borderAlpha).cgColor
+    button.attributedTitle = NSAttributedString(string: button.title, attributes: [
+        .font: Theme.wizardFooterButtonFont,
+        .foregroundColor: Theme.textPrimary,
+        .paragraphStyle: {
+            let ps = NSMutableParagraphStyle()
+            ps.alignment = .center
+            return ps
+        }(),
+    ])
+    button.contentTintColor = Theme.textPrimary
+}
+
+/// Adds a 1-based keyboard-shortcut numeral to the left edge of a button,
+/// vertically centered. The badge is a child NSTextField inside the button
+/// so it moves with any window-resize. Uses the button's tint for color.
+private func addKeyboardBadge(to button: NSButton, number: Int, tint: NSColor) {
+    let badge = NSTextField(labelWithString: "\(number)")
+    badge.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+    badge.textColor = tint.withAlphaComponent(0.85)
+    badge.backgroundColor = .clear
+    badge.isBordered = false
+    badge.isEditable = false
+    badge.alignment = .center
+    let size = badge.intrinsicContentSize
+    let x: CGFloat = 10
+    let y = (button.frame.height - size.height) / 2
+    badge.frame = NSRect(x: x, y: y, width: size.width, height: size.height)
+    button.addSubview(badge)
 }
 
 // MARK: - AskUserQuestion Wizard
