@@ -2903,6 +2903,240 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     }
 }
 
+/// Handles into a freshly built question panel so the controller can hook
+/// event targets and later update selected state and Submit-enabled.
+struct WizardQuestionPanelHandles {
+    let root: NSView
+    let optionRowViews: [NSView]        // preset rows only (not the Other row)
+    let otherRow: WizardOtherRow
+    let backButton: NSButton
+    let primaryButton: NSButton         // Next → or Submit ⏎
+    let terminalButton: NSButton
+    let cancelButton: NSButton
+    let progressDots: [NSView]
+}
+
+/// Builds a full question panel (header + body + footer). Radio selection
+/// state, progress dot colors, and Submit-enabled state are applied after
+/// the fact by the controller based on `WizardState`.
+///
+/// - Parameters:
+///   - question: The question to render in the body.
+///   - stepIndex: Zero-based index of this question within the wizard.
+///   - totalSteps: Total number of question steps (not counting review).
+///   - isLastStep: True if Return / → should say "Submit ⏎" instead of "Next →".
+/// - Returns: Handles to the root and every interactive view.
+func buildWizardQuestionPanel(
+    question: WizardQuestion,
+    stepIndex: Int,
+    totalSteps: Int,
+    isLastStep: Bool
+) -> WizardQuestionPanelHandles {
+    let width = Layout.panelWidth
+    let root = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 100))
+    root.wantsLayer = true
+
+    // --- Header band ---
+    let header = NSView(frame: NSRect(x: 0, y: 0, width: width, height: Layout.wizardHeaderHeight))
+    header.wantsLayer = true
+    header.layer?.backgroundColor = Theme.background.cgColor
+
+    let tag = NSTextField(labelWithString: "ASKUSERQUESTION")
+    tag.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+    tag.textColor = Theme.toolTagColors["AskUserQuestion"] ?? Theme.mcpTag
+    tag.frame = NSRect(x: Layout.wizardBodyPaddingH, y: 9,
+                        width: 180, height: 16)
+    header.addSubview(tag)
+
+    let stepCounter = NSTextField(labelWithString: "\(stepIndex + 1) of \(totalSteps)")
+    stepCounter.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+    stepCounter.textColor = Theme.textSecondary
+    stepCounter.alignment = .right
+    stepCounter.frame = NSRect(x: width - Layout.wizardBodyPaddingH - 100, y: 9,
+                               width: 100, height: 16)
+    header.addSubview(stepCounter)
+    root.addSubview(header)
+
+    // --- Body ---
+    let body = NSView(frame: .zero)
+
+    // Header tag pill
+    let pill = NSButton(frame: .zero)
+    pill.title = question.header.uppercased()
+    pill.font = NSFont.systemFont(ofSize: 10.5, weight: .bold)
+    pill.isBordered = false
+    pill.wantsLayer = true
+    pill.layer?.cornerRadius = 4
+    pill.layer?.backgroundColor = (Theme.toolTagColors["AskUserQuestion"] ?? Theme.mcpTag).cgColor
+    pill.contentTintColor = Theme.background
+    let pillSize = (question.header.uppercased() as NSString)
+        .size(withAttributes: [.font: pill.font!])
+    pill.frame = NSRect(x: Layout.wizardBodyPaddingH, y: 0,
+                        width: ceil(pillSize.width) + 16, height: 18)
+    body.addSubview(pill)
+
+    // Question text
+    let qField = NSTextField(labelWithString: question.question)
+    qField.font = Theme.wizardQuestionFont
+    qField.textColor = Theme.textPrimary
+    qField.lineBreakMode = .byWordWrapping
+    qField.usesSingleLineMode = false
+    qField.maximumNumberOfLines = 0
+    qField.preferredMaxLayoutWidth = width - Layout.wizardBodyPaddingH * 2
+    let qHeight = ceil(qField.intrinsicContentSize.height)
+    qField.frame = NSRect(x: Layout.wizardBodyPaddingH, y: 0,
+                          width: width - Layout.wizardBodyPaddingH * 2, height: qHeight)
+    body.addSubview(qField)
+
+    // Option rows
+    var optionRowViews: [NSView] = []
+    for (i, opt) in question.options.enumerated() {
+        let row = buildWizardOptionRow(label: opt.label, description: opt.description,
+                                       selected: false, index: i + 1)
+        optionRowViews.append(row)
+        body.addSubview(row)
+    }
+
+    // Other row (last)
+    let otherRow = WizardOtherRow()
+    otherRow.indexNumber = question.options.count + 1
+    body.addSubview(otherRow)
+
+    // Progress dots
+    var progressDots: [NSView] = []
+    for _ in 0..<totalSteps {
+        let dot = NSView(frame: NSRect(x: 0, y: 0,
+            width: Layout.wizardProgressDotWidth, height: Layout.wizardProgressDotHeight))
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = Layout.wizardProgressDotHeight / 2
+        dot.layer?.backgroundColor = Theme.wizardProgressInactive.cgColor
+        body.addSubview(dot)
+        progressDots.append(dot)
+    }
+
+    // Layout body contents vertically
+    // (we stack from top down; AppKit uses bottom-left origin, so we lay out at end)
+    let pillTopY = Layout.wizardBodyPaddingV
+    let qTopY = pillTopY + 18 + 6
+    let rowTopY = qTopY + qHeight + 10
+    // reserve space for option rows + other row + progress dots
+    let totalRowsHeight = CGFloat(question.options.count + 1) *
+        Layout.wizardRowHeightMin + CGFloat(question.options.count) * Layout.wizardRowGap
+    let progressAreaHeight: CGFloat = Layout.wizardProgressTopPadding +
+        Layout.wizardProgressDotHeight
+    let bodyHeight = rowTopY + totalRowsHeight + progressAreaHeight + Layout.wizardBodyBottomPadding
+    body.frame = NSRect(x: 0, y: Layout.wizardFooterHeight, width: width, height: bodyHeight)
+
+    // Flip y (AppKit origin bottom-left)
+    pill.frame.origin.y = bodyHeight - pillTopY - 18
+    qField.frame.origin.y = bodyHeight - qTopY - qHeight
+
+    var yCursor = bodyHeight - rowTopY - Layout.wizardRowHeightMin
+    for row in optionRowViews {
+        row.frame = NSRect(x: Layout.wizardBodyPaddingH, y: yCursor,
+            width: width - Layout.wizardBodyPaddingH * 2, height: Layout.wizardRowHeightMin)
+        yCursor -= (Layout.wizardRowHeightMin + Layout.wizardRowGap)
+    }
+    otherRow.frame = NSRect(x: Layout.wizardBodyPaddingH, y: yCursor,
+        width: width - Layout.wizardBodyPaddingH * 2, height: Layout.wizardRowHeightMin)
+
+    // Progress dots centered
+    let dotsTotalWidth = CGFloat(totalSteps) * Layout.wizardProgressDotWidth +
+        CGFloat(max(0, totalSteps - 1)) * Layout.wizardProgressDotGap
+    var dx = (width - dotsTotalWidth) / 2
+    let dotY = yCursor - Layout.wizardProgressTopPadding - Layout.wizardProgressDotHeight
+    for dot in progressDots {
+        dot.frame.origin = NSPoint(x: dx, y: dotY)
+        dx += Layout.wizardProgressDotWidth + Layout.wizardProgressDotGap
+    }
+
+    root.addSubview(body)
+
+    // --- Footer ---
+    let footer = NSView(frame: NSRect(x: 0, y: 0, width: width, height: Layout.wizardFooterHeight))
+    footer.wantsLayer = true
+    footer.layer?.backgroundColor = Theme.codeBackground.cgColor
+
+    let back = makeWizardFooterButton(title: "← Back",
+        fill: Theme.buttonPersist.withAlphaComponent(0.06),
+        border: Theme.buttonPersist.withAlphaComponent(0.12),
+        textColor: Theme.textPrimary)
+    back.frame = NSRect(x: Layout.wizardBodyPaddingH,
+        y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
+        width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
+    footer.addSubview(back)
+
+    let primary = makeWizardFooterButton(
+        title: isLastStep ? "Submit ⏎" : "Next →",
+        fill: Theme.buttonPersist.withAlphaComponent(0.22),
+        border: Theme.buttonPersist.withAlphaComponent(0.50),
+        textColor: Theme.textPrimary)
+    footer.addSubview(primary)
+
+    let terminal = makeWizardFooterButton(title: "Terminal",
+        fill: Theme.buttonAllow.withAlphaComponent(0.18),
+        border: Theme.buttonAllow.withAlphaComponent(0.45),
+        textColor: Theme.textPrimary)
+    terminal.frame = NSRect(x: 0, y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
+        width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
+    footer.addSubview(terminal)
+
+    let cancel = makeWizardFooterButton(title: "Cancel",
+        fill: Theme.buttonDeny.withAlphaComponent(0.10),
+        border: Theme.buttonDeny.withAlphaComponent(0.35),
+        textColor: Theme.textPrimary)
+    cancel.frame = NSRect(x: 0, y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
+        width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
+    footer.addSubview(cancel)
+
+    // Place: Back (left) · Primary (fill) · Terminal · Cancel (right)
+    let backRightEdge = back.frame.maxX + Layout.wizardFooterGap
+    let rightReserved = Layout.wizardFooterSideButtonWidth * 2 + Layout.wizardFooterGap * 2
+    primary.frame = NSRect(
+        x: backRightEdge,
+        y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
+        width: width - backRightEdge - rightReserved - Layout.wizardBodyPaddingH,
+        height: Layout.wizardFooterButtonHeight)
+    terminal.frame.origin.x = primary.frame.maxX + Layout.wizardFooterGap
+    cancel.frame.origin.x = terminal.frame.maxX + Layout.wizardFooterGap
+
+    root.addSubview(footer)
+
+    // Size root
+    let rootHeight = Layout.wizardHeaderHeight + bodyHeight + Layout.wizardFooterHeight
+    root.frame.size = NSSize(width: width, height: rootHeight)
+    header.frame.origin.y = rootHeight - Layout.wizardHeaderHeight
+    body.frame.origin.y = Layout.wizardFooterHeight
+
+    return WizardQuestionPanelHandles(
+        root: root,
+        optionRowViews: optionRowViews,
+        otherRow: otherRow,
+        backButton: back,
+        primaryButton: primary,
+        terminalButton: terminal,
+        cancelButton: cancel,
+        progressDots: progressDots)
+}
+
+/// Factory for a single footer button with fill/border/text colors.
+/// Used by both the question panel and the review panel.
+func makeWizardFooterButton(title: String, fill: NSColor, border: NSColor, textColor: NSColor) -> NSButton {
+    let b = NSButton(title: title, target: nil, action: nil)
+    b.isBordered = false
+    b.wantsLayer = true
+    b.alignment = .center
+    b.layer?.cornerRadius = Layout.wizardRowCornerRadius
+    b.layer?.backgroundColor = fill.cgColor
+    b.layer?.borderColor = border.cgColor
+    b.layer?.borderWidth = 1
+    b.attributedTitle = NSAttributedString(string: title, attributes: [
+        .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+        .foregroundColor: textColor,
+    ])
+    return b
+}
+
 // MARK: - Dialog Construction
 
 /// Builds and runs the permission dialog, returning the user's selected result key.
