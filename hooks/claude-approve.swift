@@ -228,6 +228,12 @@ enum Theme {
     /// must be visually distinct from the blue primary button on the same row.
     static let wizardNeutralFillRest   = NSColor(calibratedWhite: 1.0, alpha: 0.06)
     static let wizardNeutralBorderRest = NSColor(calibratedWhite: 1.0, alpha: 0.18)
+    /// Press-state fill for neutral (Back, Ok) wizard footer buttons. Alpha
+    /// is picked to match the perceived brightness of the colored primary
+    /// (Submit / Go to Terminal) buttons' press flash — the lower-alpha
+    /// neutral fill doesn't brighten as visibly against the dark panel as
+    /// the saturated blue / green fills do, so we compensate here.
+    static let wizardNeutralFillPress  = NSColor(calibratedWhite: 1.0, alpha: 0.42)
 
     /// Hairline color used for dividers between the session-identity block
     /// and the tag-pill row in every dialog. Subtle on dark mode panels.
@@ -352,11 +358,11 @@ enum Layout {
     static let morphSendMargin: CGFloat = 5
 
     // Wizard — panel regions
-    static let wizardHeaderHeight: CGFloat = 34
+    static let wizardHeaderHeight: CGFloat = 26
     static let wizardFooterHeight: CGFloat = 56
     static let wizardBodyPaddingH: CGFloat = 14
-    static let wizardBodyPaddingV: CGFloat = 16
-    static let wizardBodyBottomPadding: CGFloat = 14
+    static let wizardBodyPaddingV: CGFloat = 6
+    static let wizardBodyBottomPadding: CGFloat = 12
 
     // Wizard — option row
     static let wizardRowHeightMin: CGFloat = 44
@@ -380,7 +386,7 @@ enum Layout {
     static let wizardProgressDotWidth: CGFloat = 22
     static let wizardProgressDotHeight: CGFloat = 3
     static let wizardProgressDotGap: CGFloat = 6
-    static let wizardProgressTopPadding: CGFloat = 18
+    static let wizardProgressTopPadding: CGFloat = 12
 
     // Wizard — panel shell
     /// Initial panel height before `resizePanelToFit` swaps in the measured content height.
@@ -391,7 +397,7 @@ enum Layout {
 
     // Wizard — header labels and step counter
     static let wizardHeaderLabelHeight: CGFloat = 16
-    static let wizardHeaderLabelY: CGFloat = 9
+    static let wizardHeaderLabelY: CGFloat = 5
     static let wizardHeaderTagWidth: CGFloat = 180
     static let wizardHeaderReviewTagWidth: CGFloat = 260
     static let wizardHeaderCounterWidth: CGFloat = 100
@@ -696,11 +702,24 @@ func saveToLocalSettings(input: HookInput, rule: String) {
 ///   - decision: The permission decision — `"allow"` or `"deny"`.
 ///   - reason: A human-readable reason string explaining the decision.
 func writeHookResponse(decision: String, reason: String) {
-    let response: [String: Any] = ["hookSpecificOutput": [
+    writeHookResponse(decision: decision, reason: reason, updatedInput: nil)
+}
+
+/// Emits the hook response with an optional `updatedInput` block. When
+/// non-nil, Claude Code replaces the tool's input with the provided object
+/// before running the tool. Used by the AskUserQuestion wizard to inject
+/// the user's answers into the tool's `answers` field, so the tool sees
+/// them as already-collected and skips its own native prompt.
+func writeHookResponse(decision: String, reason: String, updatedInput: [String: Any]?) {
+    var hookOut: [String: Any] = [
         "hookEventName": "PreToolUse",
         "permissionDecision": decision,
         "permissionDecisionReason": reason,
-    ]]
+    ]
+    if let updatedInput = updatedInput {
+        hookOut["updatedInput"] = updatedInput
+    }
+    let response: [String: Any] = ["hookSpecificOutput": hookOut]
     if let data = try? JSONSerialization.data(withJSONObject: response) {
         FileHandle.standardOutput.write(data)
     } else {
@@ -2847,6 +2866,28 @@ final class WizardState {
 ///
 /// Out-of-range preset indices (upstream invariant violation) render as
 /// `→ (invalid option)` rather than crashing the hook.
+/// Builds the `answers` dictionary that AskUserQuestion's tool input accepts
+/// when the permission component has pre-collected answers. Keyed by the
+/// original question text (the schema's contract), value is the plain answer
+/// string the user picked or typed. The tool reads this and skips its own
+/// native prompt, so the model sees the answers as a normal tool result.
+func buildWizardAnswersDict(state: WizardState) -> [String: String] {
+    var dict: [String: String] = [:]
+    for (i, q) in state.questions.enumerated() {
+        switch state.answers[i] {
+        case .preset(let idx):
+            if idx >= 0, idx < q.options.count {
+                dict[q.question] = q.options[idx].label
+            }
+        case .custom(let text):
+            dict[q.question] = text
+        case .none:
+            continue
+        }
+    }
+    return dict
+}
+
 func formatWizardAnswers(state: WizardState) -> String {
     var lines: [String] = ["User answered inline via dialog:", ""]
     for (i, q) in state.questions.enumerated() {
@@ -3321,7 +3362,8 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
 /// event targets and later update selected state and Submit-enabled.
 struct WizardQuestionPanelHandles {
     let root: NSView
-    let header: NSView                  // top band; shifts when body grows
+    let identityHeader: NSView          // project + cwd + separator; shifts when body grows
+    let header: NSView                  // ASKUSERQUESTION band; shifts when body grows
     let body: NSView                    // content area; resizes with Other row
     let pill: NSButton                  // category tag
     let questionField: NSTextField
@@ -3348,7 +3390,9 @@ func buildWizardQuestionPanel(
     question: WizardQuestion,
     stepIndex: Int,
     totalSteps: Int,
-    isLastStep: Bool
+    isLastStep: Bool,
+    projectName: String,
+    cwd: String
 ) -> WizardQuestionPanelHandles {
     let width = Layout.panelWidth
     let root = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 100))
@@ -3538,14 +3582,22 @@ func buildWizardQuestionPanel(
 
     root.addSubview(footer)
 
+    // Identity header (project + cwd + separator) — matches Permission / Done.
+    let (identityHeaderView, identityHeaderH) =
+        makeWizardIdentityHeader(projectName: projectName, cwd: cwd, width: width)
+    root.addSubview(identityHeaderView)
+
     // Size root
-    let rootHeight = Layout.wizardHeaderHeight + bodyHeight + Layout.wizardFooterTwoRowHeight
+    let rootHeight = identityHeaderH + Layout.wizardHeaderHeight
+        + bodyHeight + Layout.wizardFooterTwoRowHeight
     root.frame.size = NSSize(width: width, height: rootHeight)
-    header.frame.origin.y = rootHeight - Layout.wizardHeaderHeight
+    identityHeaderView.frame.origin.y = rootHeight - identityHeaderH
+    header.frame.origin.y = rootHeight - identityHeaderH - Layout.wizardHeaderHeight
     body.frame.origin.y = Layout.wizardFooterTwoRowHeight
 
     return WizardQuestionPanelHandles(
         root: root,
+        identityHeader: identityHeaderView,
         header: header,
         body: body,
         pill: pill,
@@ -3557,6 +3609,61 @@ func buildWizardQuestionPanel(
         terminalButton: terminal,
         cancelButton: cancel,
         progressDots: progressDots)
+}
+
+/// Builds the wizard's identity band — project name, cwd, hairline separator —
+/// matching the header style of the Permission and Done dialogs. Returns the
+/// band's view plus its total height so the caller can stack it on top of the
+/// existing wizard content and size the root accordingly.
+func makeWizardIdentityHeader(projectName: String, cwd: String, width: CGFloat) -> (NSView, CGFloat) {
+    // Matches the spacing stack used by Permission / Done dialog headers so
+    // the wizard visually belongs to the same family. Vertical rhythm, from
+    // top down: panelTopPadding → project → path → sectionGap → hairline
+    // separator → sectionGap (breathing room before the ASKUSERQUESTION band).
+    let topPad     = Layout.panelTopPadding
+    let gapToSep   = Layout.sectionGap
+    // Match `wizardBodyPaddingV` so the ASKUSERQUESTION band has equal
+    // breathing room above and below, and so the outer padding of the top
+    // region matches the bottom region (progress dots area).
+    let bottomPad  = Layout.wizardBodyPaddingV
+    let height     = topPad + Layout.projectHeight + Layout.pathHeight
+        + gapToSep + Layout.separatorHeight + bottomPad
+
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+    view.wantsLayer = true
+    view.layer?.backgroundColor = Theme.background.cgColor
+
+    var y = height - topPad
+
+    y -= Layout.projectHeight
+    let projectLabel = NSTextField(labelWithString: projectName)
+    projectLabel.font = NSFont.systemFont(ofSize: Layout.projectFontSize, weight: .bold)
+    projectLabel.textColor = Theme.textPrimary
+    projectLabel.frame = NSRect(x: Layout.panelMargin, y: y,
+                                width: width - Layout.panelMargin * 2,
+                                height: Layout.projectHeight)
+    projectLabel.lineBreakMode = .byTruncatingTail
+    view.addSubview(projectLabel)
+
+    y -= Layout.pathHeight
+    let pathLabel = NSTextField(labelWithString: cwd)
+    pathLabel.font = NSFont.systemFont(ofSize: Layout.pathFontSize, weight: .regular)
+    pathLabel.textColor = Theme.textSecondary
+    pathLabel.frame = NSRect(x: Layout.panelMargin, y: y,
+                             width: width - Layout.panelMargin * 2,
+                             height: Layout.pathLineHeight)
+    pathLabel.lineBreakMode = .byTruncatingMiddle
+    view.addSubview(pathLabel)
+
+    y -= gapToSep
+    let separator = NSView(frame: NSRect(x: Layout.panelInset, y: y - Layout.separatorHeight,
+                                         width: width - Layout.panelInset * 2,
+                                         height: Layout.separatorHeight))
+    separator.wantsLayer = true
+    separator.layer?.backgroundColor = Theme.wizardDivider.cgColor
+    view.addSubview(separator)
+
+    return (view, height)
 }
 
 /// Factory for a single footer button with fill/border/text colors.
@@ -3773,14 +3880,14 @@ func buildWizardReviewPanel(state: WizardState) -> WizardReviewPanelHandles {
     footer.addSubview(back)
 
     let submit = makeWizardFooterButton(title: WizardLabels.submit,
-        fill: Theme.buttonAllow.withAlphaComponent(0.22),
-        border: Theme.buttonAllow.withAlphaComponent(0.55),
+        fill: Theme.buttonPersist.withAlphaComponent(0.22),
+        border: Theme.buttonPersist.withAlphaComponent(0.50),
         textColor: Theme.textPrimary)
     footer.addSubview(submit)
 
     let terminal = makeWizardFooterButton(title: terminalButtonLabel(),
-        fill: Theme.buttonAllow.withAlphaComponent(0.10),
-        border: Theme.buttonAllow.withAlphaComponent(0.35),
+        fill: Theme.buttonAllow.withAlphaComponent(0.22),
+        border: Theme.buttonAllow.withAlphaComponent(0.55),
         textColor: Theme.textPrimary)
     terminal.frame = NSRect(x: 0, y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
         width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
@@ -3827,9 +3934,11 @@ func buildWizardReviewPanel(state: WizardState) -> WizardReviewPanelHandles {
 func applyWizardSubmitEnabled(_ button: NSButton, enabled: Bool, isSubmit: Bool) {
     button.isEnabled = enabled
     if enabled {
-        let color = isSubmit ? Theme.buttonAllow : Theme.buttonPersist
-        button.layer?.backgroundColor = color.withAlphaComponent(0.22).cgColor
-        button.layer?.borderColor = color.withAlphaComponent(isSubmit ? 0.55 : 0.50).cgColor
+        // Always blue — keeps the primary button visually distinct from the
+        // green "Go to Terminal" button on the last step. Previously switched
+        // to green when isSubmit, which made both buttons the same hue.
+        button.layer?.backgroundColor = Theme.buttonPersist.withAlphaComponent(0.22).cgColor
+        button.layer?.borderColor = Theme.buttonPersist.withAlphaComponent(0.50).cgColor
         button.attributedTitle = NSAttributedString(string: button.title, attributes: [
             .font: Theme.wizardFooterButtonFont,
             .foregroundColor: Theme.textPrimary,
@@ -3846,7 +3955,12 @@ func applyWizardSubmitEnabled(_ button: NSButton, enabled: Bool, isSubmit: Bool)
 
 /// Outcome of a wizard run, returned by `WizardController.run()`.
 enum WizardOutcome {
-    case submit(reason: String)        // Claude gets this reason as deny-feedback
+    /// User submitted answers. `answers` is the per-question dictionary ready
+    /// to inject into AskUserQuestion's `updatedInput` so the tool skips its
+    /// native prompt. `reasonText` is the same data formatted for humans —
+    /// retained as a fallback for anything that needs a string (logging,
+    /// legacy deny paths).
+    case submit(answers: [String: String], reasonText: String)
     case cancel                         // User dismissed; deny with generic reason
     case terminal                       // User chose Go to Terminal; allow + open terminal
 }
@@ -3858,6 +3972,11 @@ final class WizardController: NSObject {
     let state: WizardState
     private let panel: NSPanel
     private let container: NSView
+    /// Project identity — shown in the wizard's top band. Mirrors the
+    /// Permission / Done dialogs so the user always sees which terminal
+    /// tab the dialog belongs to.
+    private let projectName: String
+    private let cwd: String
     private var currentQuestionHandles: WizardQuestionPanelHandles?
     private var outcome: WizardOutcome = .cancel
     private var localKeyMonitor: Any?
@@ -3865,10 +3984,13 @@ final class WizardController: NSObject {
     /// Drives panel layout (expanded row height) and keyboard-routing.
     private var otherActive: Bool = false
 
-    init(state: WizardState, panel: NSPanel, contentContainer: NSView) {
+    init(state: WizardState, panel: NSPanel, contentContainer: NSView,
+         projectName: String, cwd: String) {
         self.state = state
         self.panel = panel
         self.container = contentContainer
+        self.projectName = projectName
+        self.cwd = cwd
     }
 
     /// Runs the wizard modally and returns its outcome.
@@ -3896,7 +4018,9 @@ final class WizardController: NSObject {
         let h = buildWizardQuestionPanel(
             question: q, stepIndex: qIndex,
             totalSteps: state.questions.count,
-            isLastStep: isLast)
+            isLastStep: isLast,
+            projectName: projectName,
+            cwd: cwd)
         container.addSubview(h.root)
         resizePanelToFit(rootHeight: h.root.frame.height)
         currentQuestionHandles = h
@@ -3926,9 +4050,14 @@ final class WizardController: NSObject {
     }
 
     private func applyProgress(dots: [NSView]) {
+        // Dots reflect the user's position in the wizard, not per-question
+        // answer state. With pre-selected first options every answer is
+        // immediately non-nil, so "answered" would paint all dots active
+        // from the first paint. Position-based filling — dots 0..step are
+        // green, the rest gray — correctly communicates progress.
         for (i, dot) in dots.enumerated() {
-            let filled = state.answers[i] != nil
-            dot.layer?.backgroundColor = (filled ? Theme.wizardProgressActive : Theme.wizardProgressInactive).cgColor
+            let active = i <= state.step
+            dot.layer?.backgroundColor = (active ? Theme.wizardProgressActive : Theme.wizardProgressInactive).cgColor
         }
     }
 
@@ -4053,27 +4182,35 @@ final class WizardController: NSObject {
 
     @objc private func onBack() {
         // Press animation on the triggered button (mouse or keyboard path).
+        // Background brightens + scales, matching Permission / Done dialogs.
         if let h = currentQuestionHandles {
+            h.backButton.layer?.backgroundColor = Theme.wizardNeutralFillPress.cgColor
             animateButtonPress(h.backButton)
         }
-        if state.step > 0 {
-            state.step -= 1
-            otherActive = false
-            renderCurrentStep()
+        // Delay the re-render so the press animation has time to play out —
+        // otherwise renderCurrentStep() replaces the button mid-animation and
+        // the flash is invisible. Same delay Terminal / Ok / Submit already use.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) { [weak self] in
+            guard let self = self, self.state.step > 0 else { return }
+            self.state.step -= 1
+            self.otherActive = false
+            self.renderCurrentStep()
         }
     }
 
     @objc private func onPrimary() {
-        // Press animation on the triggered button (mouse or keyboard path).
         if let h = currentQuestionHandles {
+            h.primaryButton.layer?.backgroundColor =
+                Theme.buttonPersist.withAlphaComponent(Theme.buttonPressAlpha).cgColor
             animateButtonPress(h.primaryButton)
         }
         advance()
     }
 
     @objc private func onTerminal() {
-        // Press animation on the triggered button (mouse or keyboard path).
         if let h = currentQuestionHandles {
+            h.terminalButton.layer?.backgroundColor =
+                Theme.buttonAllow.withAlphaComponent(Theme.buttonPressAlpha).cgColor
             animateButtonPress(h.terminalButton)
         }
         outcome = .terminal
@@ -4083,8 +4220,8 @@ final class WizardController: NSObject {
     }
 
     @objc private func onCancel() {
-        // Press animation on the triggered button (mouse or keyboard path).
         if let h = currentQuestionHandles {
+            h.cancelButton.layer?.backgroundColor = Theme.wizardNeutralFillPress.cgColor
             animateButtonPress(h.cancelButton)
         }
         outcome = .cancel
@@ -4106,14 +4243,22 @@ final class WizardController: NSObject {
         if qi == state.questions.count - 1 {
             // Last question → final submit. Matches Claude Code CLI flow
             // (no separate review step).
-            outcome = .submit(reason: formatWizardAnswers(state: state))
+            outcome = .submit(
+                answers: buildWizardAnswersDict(state: state),
+                reasonText: formatWizardAnswers(state: state))
             DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) {
                 self.stopModal()
             }
         } else {
-            state.step = qi + 1
-            otherActive = false
-            renderCurrentStep()
+            // Delay the re-render so the Next button's press animation plays
+            // out before the panel rebuilds. Without this the flash is cut
+            // off mid-animation on non-last steps.
+            DispatchQueue.main.asyncAfter(deadline: .now() + Layout.pressAnimationDelay) { [weak self] in
+                guard let self = self else { return }
+                self.state.step = qi + 1
+                self.otherActive = false
+                self.renderCurrentStep()
+            }
         }
     }
 
@@ -4168,6 +4313,11 @@ final class WizardController: NSObject {
         h.body.frame.size.height += delta
         h.root.frame.size.height += delta
         h.header.frame.origin.y += delta
+        // Identity band sits above the header in root coordinates. Like
+        // `header`, it must shift up by `delta` so it stays pinned to the
+        // top of the (now-taller) root. Without this it drifts and the
+        // ASKUSERQUESTION band overlaps it on each Other-row keystroke.
+        h.identityHeader.frame.origin.y += delta
         resizePanelToFit(rootHeight: h.root.frame.height)
     }
 
@@ -4296,6 +4446,7 @@ final class WizardController: NSObject {
             activateOther(questionIndex: qi)
         }
     }
+
 }
 
 /// A click-gesture subclass that carries a single `Int` payload so one
@@ -4327,7 +4478,11 @@ private final class WizardPanel: NSPanel {
 ///
 /// - Parameter questions: Parsed wizard questions to drive the UI.
 /// - Returns: The user's outcome (submit with reasons, go-to-terminal, or cancel).
-func runAskUserQuestionWizard(questions: [WizardQuestion]) -> WizardOutcome {
+func runAskUserQuestionWizard(
+    questions: [WizardQuestion],
+    projectName: String,
+    cwd: String
+) -> WizardOutcome {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
 
@@ -4380,7 +4535,17 @@ func runAskUserQuestionWizard(questions: [WizardQuestion]) -> WizardOutcome {
     defer { focusCleanup() }
 
     let state = WizardState(questions: questions)
-    let controller = WizardController(state: state, panel: panel, contentContainer: container)
+    // UI-level convenience: pre-select the first option for every question
+    // so Next / Submit is immediately actionable on first paint. Users can
+    // still navigate with ↑/↓ or digits and pick a different option. Kept
+    // out of WizardState's defaults because the state type is also used by
+    // pure-logic tests that assume unanswered initial state.
+    for (i, q) in questions.enumerated() where !q.options.isEmpty {
+        state.selectPreset(question: i, optionIndex: 0)
+    }
+    let controller = WizardController(
+        state: state, panel: panel, contentContainer: container,
+        projectName: projectName, cwd: cwd)
     let outcome = controller.run()
     panel.orderOut(nil)
     return outcome
@@ -4637,10 +4802,23 @@ private func approveMain() {
     if input.toolName == "AskUserQuestion" {
         let questions = parseWizardQuestions(from: input.toolInput)
         if !questions.isEmpty {
-            let outcome = runAskUserQuestionWizard(questions: questions)
+            let outcome = runAskUserQuestionWizard(
+                questions: questions,
+                projectName: input.projectName,
+                cwd: input.cwd)
             switch outcome {
-            case .submit(let reason):
-                writeHookResponse(decision: "deny", reason: reason)
+            case .submit(let answers, _):
+                // Inject the wizard's answers into the tool's `answers` field
+                // via `updatedInput`, then allow the tool to run. AskUserQuestion
+                // sees the answers are pre-collected and skips its native prompt.
+                // Claude receives the answers as a normal tool result — no
+                // "hook blocking error" banner.
+                var updated = input.toolInput
+                updated["answers"] = answers
+                writeHookResponse(
+                    decision: "allow",
+                    reason: "Answers collected via wizard",
+                    updatedInput: updated)
                 notifyNextSiblingDialog()
                 exit(0)
             case .terminal:
