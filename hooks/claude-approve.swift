@@ -2322,6 +2322,39 @@ private func addButtonRows(to contentView: NSView, panel: NSPanel, options: [Per
     handler.buttons.sort { $0.tag < $1.tag }
 }
 
+// MARK: - AskUserQuestion Wizard
+
+/// Parses the `tool_input` of an `AskUserQuestion` call into typed `WizardQuestion`s.
+///
+/// Malformed entries (non-dict question entries, non-dict option entries, entries
+/// with no `label`) are silently skipped rather than aborting the whole parse —
+/// this mirrors the tolerant parsing used elsewhere in the file.
+///
+/// - Parameter toolInput: The raw `tool_input` dictionary from the hook JSON.
+/// - Returns: The parsed questions in their original order. Empty array if the
+///   `questions` key is missing or does not contain a list.
+func parseWizardQuestions(from toolInput: [String: Any]) -> [WizardQuestion] {
+    guard let raw = toolInput["questions"] as? [Any] else { return [] }
+    var result: [WizardQuestion] = []
+    for item in raw {
+        guard let dict = item as? [String: Any] else { continue }
+        let header = dict["header"] as? String ?? ""
+        let question = dict["question"] as? String ?? ""
+        var opts: [WizardOption] = []
+        if let rawOpts = dict["options"] as? [Any] {
+            for o in rawOpts {
+                guard let od = o as? [String: Any],
+                      let label = od["label"] as? String, !label.isEmpty
+                else { continue }
+                let desc = od["description"] as? String ?? ""
+                opts.append(WizardOption(label: label, description: desc))
+            }
+        }
+        result.append(WizardQuestion(header: header, question: question, options: opts))
+    }
+    return result
+}
+
 // MARK: - Dialog Construction
 
 /// Builds and runs the permission dialog, returning the user's selected result key.

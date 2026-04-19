@@ -1341,6 +1341,96 @@ func testWizardTypes() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MARK: - parseWizardQuestions Tests (7)
+// ═══════════════════════════════════════════════════════════════════
+
+func testParseWizardQuestions() {
+    test("parseWizardQuestions: missing key → empty array") {
+        assertEq(parseWizardQuestions(from: [:]).count, 0)
+    }
+    test("parseWizardQuestions: empty array → empty array") {
+        assertEq(parseWizardQuestions(from: ["questions": [[String: Any]]()]).count, 0)
+    }
+    test("parseWizardQuestions: valid single question") {
+        let input: [String: Any] = [
+            "questions": [
+                [
+                    "header": "DB",
+                    "question": "Which database?",
+                    "options": [
+                        ["label": "Postgres", "description": "SQL"],
+                        ["label": "SQLite",   "description": "Embedded"],
+                    ],
+                ],
+            ],
+        ]
+        let qs = parseWizardQuestions(from: input)
+        assertEq(qs.count, 1)
+        assertEq(qs[0].header, "DB")
+        assertEq(qs[0].question, "Which database?")
+        assertEq(qs[0].options.count, 2)
+        assertEq(qs[0].options[0].label, "Postgres")
+        assertEq(qs[0].options[1].description, "Embedded")
+    }
+    test("parseWizardQuestions: missing option description defaults to empty") {
+        let input: [String: Any] = [
+            "questions": [
+                ["header": "X", "question": "Q?", "options": [["label": "A"]]],
+            ],
+        ]
+        let qs = parseWizardQuestions(from: input)
+        assertEq(qs.count, 1)
+        assertEq(qs[0].options[0].label, "A")
+        assertEq(qs[0].options[0].description, "")
+    }
+    test("parseWizardQuestions: malformed option entry skipped") {
+        let input: [String: Any] = [
+            "questions": [
+                [
+                    "header": "X",
+                    "question": "Q?",
+                    "options": [
+                        ["label": "A", "description": "a-desc"],
+                        "not-a-dict",
+                        ["description": "no-label"],
+                        ["label": "B", "description": "b-desc"],
+                    ],
+                ],
+            ],
+        ]
+        let qs = parseWizardQuestions(from: input)
+        assertEq(qs[0].options.count, 2)
+        assertEq(qs[0].options[0].label, "A")
+        assertEq(qs[0].options[1].label, "B")
+    }
+    test("parseWizardQuestions: preserves question order") {
+        let input: [String: Any] = [
+            "questions": [
+                ["header": "A", "question": "Q1", "options": [["label": "x"]]],
+                ["header": "B", "question": "Q2", "options": [["label": "y"]]],
+                ["header": "C", "question": "Q3", "options": [["label": "z"]]],
+            ],
+        ]
+        let qs = parseWizardQuestions(from: input)
+        assertEq(qs.count, 3)
+        assertEq(qs[0].header, "A")
+        assertEq(qs[1].header, "B")
+        assertEq(qs[2].header, "C")
+    }
+    test("parseWizardQuestions: malformed question entry skipped") {
+        let input: [String: Any] = [
+            "questions": [
+                "not-a-dict",
+                ["header": "X", "question": "Q?", "options": [["label": "A"]]],
+            ],
+        ]
+        let qs = parseWizardQuestions(from: input)
+        assertEq(qs.count, 1)
+        assertEq(qs[0].header, "X")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MARK: - Main Entry Point
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1348,6 +1438,7 @@ func testWizardTypes() {
 enum ApproveTests {
     static func main() {
         testWizardTypes()
+        testParseWizardQuestions()
         testBuildGist()
         testLastComponent()
         testSummarizeBashCommand()
