@@ -3058,7 +3058,7 @@ struct WizardQuestionPanelHandles {
 ///   - question: The question to render in the body.
 ///   - stepIndex: Zero-based index of this question within the wizard.
 ///   - totalSteps: Total number of question steps (not counting review).
-///   - isLastStep: True if Return / → should say "Submit ⏎" instead of "Next →".
+///   - isLastStep: True if Return / → should say `WizardLabels.submit` instead of `WizardLabels.next`.
 /// - Returns: Handles to the root and every interactive view.
 func buildWizardQuestionPanel(
     question: WizardQuestion,
@@ -3197,7 +3197,7 @@ func buildWizardQuestionPanel(
     footer.wantsLayer = true
     footer.layer?.backgroundColor = Theme.codeBackground.cgColor
 
-    let back = makeWizardFooterButton(title: "← Back",
+    let back = makeWizardFooterButton(title: WizardLabels.back,
         fill: Theme.buttonPersist.withAlphaComponent(0.06),
         border: Theme.buttonPersist.withAlphaComponent(0.12),
         textColor: Theme.textPrimary)
@@ -3207,13 +3207,13 @@ func buildWizardQuestionPanel(
     footer.addSubview(back)
 
     let primary = makeWizardFooterButton(
-        title: isLastStep ? "Submit ⏎" : "Next →",
+        title: isLastStep ? WizardLabels.submit : WizardLabels.next,
         fill: Theme.buttonPersist.withAlphaComponent(0.22),
         border: Theme.buttonPersist.withAlphaComponent(0.50),
         textColor: Theme.textPrimary)
     footer.addSubview(primary)
 
-    let terminal = makeWizardFooterButton(title: "Terminal",
+    let terminal = makeWizardFooterButton(title: WizardLabels.terminal,
         fill: Theme.buttonAllow.withAlphaComponent(0.18),
         border: Theme.buttonAllow.withAlphaComponent(0.45),
         textColor: Theme.textPrimary)
@@ -3221,7 +3221,7 @@ func buildWizardQuestionPanel(
         width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
     footer.addSubview(terminal)
 
-    let cancel = makeWizardFooterButton(title: "Cancel",
+    let cancel = makeWizardFooterButton(title: WizardLabels.ok,
         fill: Theme.buttonDeny.withAlphaComponent(0.10),
         border: Theme.buttonDeny.withAlphaComponent(0.35),
         textColor: Theme.textPrimary)
@@ -3461,7 +3461,7 @@ func buildWizardReviewPanel(state: WizardState) -> WizardReviewPanelHandles {
     footer.wantsLayer = true
     footer.layer?.backgroundColor = Theme.codeBackground.cgColor
 
-    let back = makeWizardFooterButton(title: "← Back",
+    let back = makeWizardFooterButton(title: WizardLabels.back,
         fill: Theme.buttonPersist.withAlphaComponent(0.06),
         border: Theme.buttonPersist.withAlphaComponent(0.12),
         textColor: Theme.textPrimary)
@@ -3470,13 +3470,13 @@ func buildWizardReviewPanel(state: WizardState) -> WizardReviewPanelHandles {
         width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
     footer.addSubview(back)
 
-    let submit = makeWizardFooterButton(title: "Submit Answers ⏎",
+    let submit = makeWizardFooterButton(title: WizardLabels.submit,
         fill: Theme.buttonAllow.withAlphaComponent(0.22),
         border: Theme.buttonAllow.withAlphaComponent(0.55),
         textColor: Theme.textPrimary)
     footer.addSubview(submit)
 
-    let terminal = makeWizardFooterButton(title: "Terminal",
+    let terminal = makeWizardFooterButton(title: WizardLabels.terminal,
         fill: Theme.buttonAllow.withAlphaComponent(0.10),
         border: Theme.buttonAllow.withAlphaComponent(0.35),
         textColor: Theme.textPrimary)
@@ -3484,7 +3484,7 @@ func buildWizardReviewPanel(state: WizardState) -> WizardReviewPanelHandles {
         width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
     footer.addSubview(terminal)
 
-    let cancel = makeWizardFooterButton(title: "Cancel",
+    let cancel = makeWizardFooterButton(title: WizardLabels.ok,
         fill: Theme.buttonDeny.withAlphaComponent(0.10),
         border: Theme.buttonDeny.withAlphaComponent(0.35),
         textColor: Theme.textPrimary)
