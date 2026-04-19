@@ -2657,7 +2657,10 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     var onTextChange: (String) -> Void = { _ in }
 
     /// Bound number shown on the right (1-based); 0 hides.
-    var indexNumber: Int = 0
+    /// Setter refreshes the rendered index field.
+    var indexNumber: Int = 0 {
+        didSet { refreshIndex() }
+    }
 
     /// Is this row the currently selected option in its question?
     private(set) var selected: Bool = false
@@ -2670,6 +2673,7 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     private var labelField: NSTextField!
     private var descField: NSTextField!
     private var radioView: NSView!
+    private var idxField: NSTextField!
 
     /// Current string contents of the text view.
     var currentText: String { textView.string }
@@ -2763,11 +2767,28 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
                                  width: textWidth, height: Layout.wizardRowDescHeight)
         addSubview(descField)
 
+        idxField = NSTextField(labelWithString: "")
+        idxField.font = Theme.wizardIndexFont
+        idxField.textColor = Theme.textSecondary.withAlphaComponent(0.55)
+        idxField.alignment = .right
+        idxField.frame = NSRect(
+            x: frame.width - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth,
+            y: (Layout.wizardRowHeightMin - Layout.wizardRowIndexHeight) / 2,
+            width: Layout.wizardRowIndexWidth, height: Layout.wizardRowIndexHeight)
+        addSubview(idxField)
+
         refreshColors()
 
         // Whole-row click → activate
         let click = NSClickGestureRecognizer(target: self, action: #selector(rowClicked))
         addGestureRecognizer(click)
+    }
+
+    /// Updates the right-side index number display based on `indexNumber`.
+    private func refreshIndex() {
+        guard let field = idxField else { return }
+        field.stringValue = indexNumber > 0 ? "\(indexNumber)" : ""
+        field.textColor = selected ? Theme.buttonAllow : Theme.textSecondary.withAlphaComponent(0.55)
     }
 
     private func buildTextView() {
@@ -2802,7 +2823,7 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
 
     private func updateVisibility() {
         labelField.isHidden = isActive
-        descField.stringValue = isActive ? "Type your own answer" : "Type your own answer"
+        descField.isHidden = isActive
         scrollView.isHidden = !isActive
         refreshHeight()
     }
@@ -2827,6 +2848,7 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
             radioView.layer?.backgroundColor = NSColor.clear.cgColor
             radioView.subviews.forEach { $0.removeFromSuperview() }
         }
+        refreshIndex()
     }
 
     /// Recalculates row height based on text content when active.
@@ -2862,10 +2884,9 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     }
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        // Return → submit; Shift+Return (insertLineBreak:) and Option+Return
+        // (insertNewlineIgnoringFieldEditor:) → explicit newline; Esc → exit.
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            // Return → submit. Shift+Return sends insertNewlineIgnoringFieldEditor
-            // or insertLineBreak, both of which we let through to default behavior
-            // (they insert a newline via the text storage).
             onSubmit()
             return true
         }
