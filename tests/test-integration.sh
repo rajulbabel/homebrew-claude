@@ -98,15 +98,13 @@ echo '{"stop_hook_active":true,"cwd":"/tmp","last_assistant_message":"test"}' \
     | "$STOP" 2>/dev/null
 assert_exit "stop active=true" "$?" 0
 
-# ── 6. Stop hook: stopHookActive=false (dialog, killed after 2s) ─
-echo "  Running: stop hook active=false (timeout)..."
+# ── 6. Stop hook: stopHookActive=false (headless, CLAUDE_STOP_NOUI=1) ─
+# Using CLAUDE_STOP_NOUI=1 so the binary parses+logs and exits without
+# painting the Done dialog — otherwise the real UI flashes on every test run.
+echo "  Running: stop hook active=false (headless)..."
 echo '{"stop_hook_active":false,"cwd":"/tmp","last_assistant_message":"Done. Test"}' \
-    | "$STOP" 2>/dev/null &
-STOP_PID=$!
-sleep 2
-kill "$STOP_PID" 2>/dev/null
-wait "$STOP_PID" 2>/dev/null || true
-PASSED=$((PASSED + 1))  # If we get here without crash, pass
+    | CLAUDE_STOP_NOUI=1 "$STOP" 2>/dev/null
+assert_exit "stop active=false headless" "$?" 0
 
 # ── 7. Session approve JSON structure ───────────────────────────
 echo "  Running: session approve JSON structure..."
