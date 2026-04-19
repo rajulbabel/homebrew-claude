@@ -25,6 +25,9 @@ settings.json
 memory/
 telemetry/
 
+# Superpowers brainstorming session artifacts
+.superpowers/
+
 # macOS
 .DS_Store
 
