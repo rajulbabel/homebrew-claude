@@ -217,6 +217,28 @@ enum Theme {
     static func tagColor(for tool: String) -> NSColor {
         toolTagColors[tool] ?? mcpTag
     }
+
+    // Wizard — disabled button state
+    static let wizardButtonDisabledBg      = NSColor(calibratedWhite: 1.0, alpha: 0.10)
+    static let wizardButtonDisabledBorder  = NSColor(calibratedWhite: 1.0, alpha: 0.12)
+    static let wizardButtonDisabledText    = NSColor(calibratedWhite: 0.45, alpha: 1.0)
+
+    // Wizard — option row
+    static let wizardRowBg                 = NSColor(calibratedWhite: 1.0, alpha: 0.03)
+    static let wizardRowBorder             = NSColor(calibratedWhite: 1.0, alpha: 0.08)
+    static let wizardRowSelectedBg         = NSColor(calibratedRed: 0.18, green: 0.80, blue: 0.44, alpha: 0.14)
+    static let wizardRowSelectedBorder     = NSColor(calibratedRed: 0.18, green: 0.80, blue: 0.44, alpha: 0.55)
+    static let wizardRadioInnerGap         = NSColor(calibratedRed: 0.10, green: 0.10, blue: 0.12, alpha: 1.0)
+
+    // Wizard — progress dots
+    static let wizardProgressActive        = NSColor(calibratedRed: 0.18, green: 0.80, blue: 0.44, alpha: 1.0)
+    static let wizardProgressInactive      = NSColor(calibratedWhite: 1.0, alpha: 0.18)
+
+    // Wizard — typography
+    static let wizardQuestionFont          = NSFont.systemFont(ofSize: 13.5, weight: .medium)
+    static let wizardLabelFont             = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    static let wizardDescFont              = NSFont.systemFont(ofSize: 11, weight: .regular)
+    static let wizardOtherTextFont         = NSFont.systemFont(ofSize: 12, weight: .semibold)
 }
 
 // MARK: - Layout
@@ -299,6 +321,40 @@ enum Layout {
     static let morphSendHeight: CGFloat = 24
     static let morphSendCornerRadius: CGFloat = 6
     static let morphSendMargin: CGFloat = 5
+
+    // Wizard — panel regions
+    static let wizardHeaderHeight: CGFloat = 34
+    static let wizardFooterHeight: CGFloat = 56
+    static let wizardBodyPaddingH: CGFloat = 14
+    static let wizardBodyPaddingV: CGFloat = 16
+    static let wizardBodyBottomPadding: CGFloat = 14
+
+    // Wizard — option row
+    static let wizardRowHeightMin: CGFloat = 44
+    static let wizardRowGap: CGFloat = 6
+    static let wizardRowPaddingH: CGFloat = 12
+    static let wizardRowPaddingV: CGFloat = 10
+    static let wizardRowCornerRadius: CGFloat = 8
+    static let wizardRadioSize: CGFloat = 14
+    static let wizardRadioInnerRing: CGFloat = 2.5
+    static let wizardRadioGap: CGFloat = 10
+
+    // Wizard — progress dots
+    static let wizardProgressDotWidth: CGFloat = 22
+    static let wizardProgressDotHeight: CGFloat = 3
+    static let wizardProgressDotGap: CGFloat = 6
+    static let wizardProgressTopPadding: CGFloat = 18
+
+    // Wizard — footer
+    static let wizardFooterGap: CGFloat = 8
+    static let wizardFooterButtonHeight: CGFloat = 36
+    static let wizardFooterSideButtonWidth: CGFloat = 82
+
+    // Wizard — Other row text area
+    static let wizardOtherMinHeight: CGFloat = 20
+    static let wizardOtherMaxHeight: CGFloat = 140
+    static let wizardOtherCaretWidth: CGFloat = 1.5
+    static let wizardOtherCaretHeight: CGFloat = 12
 
     /// Spacing breakdown for fixed chrome (everything except code block and buttons).
     static let fixedChrome: CGFloat = panelTopPadding + projectHeight + pathHeight
