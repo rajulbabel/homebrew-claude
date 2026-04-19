@@ -367,6 +367,13 @@ enum Layout {
     static let wizardProgressDotGap: CGFloat = 6
     static let wizardProgressTopPadding: CGFloat = 18
 
+    // Wizard — panel shell
+    /// Initial panel height before `resizePanelToFit` swaps in the measured content height.
+    static let wizardInitialPanelHeight: CGFloat = 400
+    /// Fraction of visible-frame height at which to place the panel's top (0.5 = center, 0.55 = slightly above).
+    static let wizardVerticalBias: CGFloat = 0.55
+    static let wizardPanelCornerRadius: CGFloat = 10
+
     // Wizard — header labels and step counter
     static let wizardHeaderLabelHeight: CGFloat = 16
     static let wizardHeaderLabelY: CGFloat = 9
@@ -3811,16 +3818,18 @@ private final class WizardClickGesture: NSClickGestureRecognizer {
 /// every render, so the panel snaps to its actual content height before the
 /// modal begins.
 ///
-/// - Parameters:
-///   - input: The hook input (used for ambient context; the controller owns questions).
-///   - questions: Parsed wizard questions to drive the UI.
+/// There is no automatic timeout: an `AskUserQuestion` is always an explicit
+/// request for user input, so walking away is the user's signal, not a
+/// failure mode.
+///
+/// - Parameter questions: Parsed wizard questions to drive the UI.
 /// - Returns: The user's outcome (submit with reasons, go-to-terminal, or cancel).
-func runAskUserQuestionWizard(input: HookInput, questions: [WizardQuestion]) -> WizardOutcome {
+func runAskUserQuestionWizard(questions: [WizardQuestion]) -> WizardOutcome {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
 
     // Panel shell (mirrors existing dialog behavior: non-activating, all-spaces)
-    let initialHeight: CGFloat = 400   // will be replaced by resizePanelToFit
+    let initialHeight = Layout.wizardInitialPanelHeight
     let panel = NSPanel(
         contentRect: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: initialHeight),
         styleMask: [.borderless, .nonactivatingPanel],
@@ -3832,16 +3841,16 @@ func runAskUserQuestionWizard(input: HookInput, questions: [WizardQuestion]) -> 
     panel.backgroundColor = Theme.background
     panel.isOpaque = false
     panel.contentView?.wantsLayer = true
-    panel.contentView?.layer?.cornerRadius = 10
+    panel.contentView?.layer?.cornerRadius = Layout.wizardPanelCornerRadius
 
     let container = NSView(frame: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: initialHeight))
     panel.contentView?.addSubview(container)
 
-    // Center on screen
+    // Center on screen (slight bias above vertical center per wizardVerticalBias)
     if let screen = NSScreen.main {
         let scr = screen.visibleFrame
         let x = scr.origin.x + (scr.width - panel.frame.width) / 2
-        let y = scr.origin.y + (scr.height - panel.frame.height) * 0.55
+        let y = scr.origin.y + (scr.height - panel.frame.height) * Layout.wizardVerticalBias
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
@@ -4108,17 +4117,20 @@ private func approveMain() {
     if input.toolName == "AskUserQuestion" {
         let questions = parseWizardQuestions(from: input.toolInput)
         if !questions.isEmpty {
-            let outcome = runAskUserQuestionWizard(input: input, questions: questions)
+            let outcome = runAskUserQuestionWizard(questions: questions)
             switch outcome {
             case .submit(let reason):
                 writeHookResponse(decision: "deny", reason: reason)
+                notifyNextSiblingDialog()
                 exit(0)
             case .terminal:
                 openTerminalApp(cwd: input.cwd, sessionId: input.sessionId)
                 writeHookResponse(decision: "allow", reason: "Allowed — terminal activated for user input")
+                notifyNextSiblingDialog()
                 exit(0)
             case .cancel:
                 writeHookResponse(decision: "deny", reason: "User cancelled the question dialog")
+                notifyNextSiblingDialog()
                 exit(0)
             }
         }
