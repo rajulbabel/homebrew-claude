@@ -3803,6 +3803,57 @@ private final class WizardClickGesture: NSClickGestureRecognizer {
     var payload: Int = 0
 }
 
+/// Creates the NSPanel, installs a content container, and runs the wizard.
+///
+/// Mirrors the non-activating, all-Spaces behavior of the legacy permission
+/// dialog so it behaves identically relative to the terminal. The initial
+/// height is a placeholder — `WizardController` calls `resizePanelToFit` on
+/// every render, so the panel snaps to its actual content height before the
+/// modal begins.
+///
+/// - Parameters:
+///   - input: The hook input (used for ambient context; the controller owns questions).
+///   - questions: Parsed wizard questions to drive the UI.
+/// - Returns: The user's outcome (submit with reasons, go-to-terminal, or cancel).
+func runAskUserQuestionWizard(input: HookInput, questions: [WizardQuestion]) -> WizardOutcome {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+
+    // Panel shell (mirrors existing dialog behavior: non-activating, all-spaces)
+    let initialHeight: CGFloat = 400   // will be replaced by resizePanelToFit
+    let panel = NSPanel(
+        contentRect: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: initialHeight),
+        styleMask: [.borderless, .nonactivatingPanel],
+        backing: .buffered, defer: false)
+    panel.isFloatingPanel = true
+    panel.level = .floating
+    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    panel.hasShadow = true
+    panel.backgroundColor = Theme.background
+    panel.isOpaque = false
+    panel.contentView?.wantsLayer = true
+    panel.contentView?.layer?.cornerRadius = 10
+
+    let container = NSView(frame: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: initialHeight))
+    panel.contentView?.addSubview(container)
+
+    // Center on screen
+    if let screen = NSScreen.main {
+        let scr = screen.visibleFrame
+        let x = scr.origin.x + (scr.width - panel.frame.width) / 2
+        let y = scr.origin.y + (scr.height - panel.frame.height) * 0.55
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    panel.orderFrontRegardless()
+
+    let state = WizardState(questions: questions)
+    let controller = WizardController(state: state, panel: panel, contentContainer: container)
+    let outcome = controller.run()
+    panel.orderOut(nil)
+    return outcome
+}
+
 // MARK: - Dialog Construction
 
 /// Builds and runs the permission dialog, returning the user's selected result key.
@@ -4050,6 +4101,30 @@ private func approveMain() {
     app.setActivationPolicy(.accessory)
     installEditMenu()
     NSSound(named: "Funk")?.play()
+
+    // AskUserQuestion: route well-formed prompts through the wizard instead of
+    // the legacy read-only dialog. A malformed payload with no questions falls
+    // through to the old dialog so the user still gets a "Go to Terminal" path.
+    if input.toolName == "AskUserQuestion" {
+        let questions = parseWizardQuestions(from: input.toolInput)
+        if !questions.isEmpty {
+            let outcome = runAskUserQuestionWizard(input: input, questions: questions)
+            switch outcome {
+            case .submit(let reason):
+                writeHookResponse(decision: "deny", reason: reason)
+                exit(0)
+            case .terminal:
+                openTerminalApp(cwd: input.cwd, sessionId: input.sessionId)
+                writeHookResponse(decision: "allow", reason: "Allowed — terminal activated for user input")
+                exit(0)
+            case .cancel:
+                writeHookResponse(decision: "deny", reason: "User cancelled the question dialog")
+                exit(0)
+            }
+        }
+        // Fallthrough: malformed AskUserQuestion with no questions → show the
+        // old read-only dialog so the user still has Go to Terminal.
+    }
 
     // Build dialog data
     let permOptions = buildPermOptions(input: input)
