@@ -4112,10 +4112,16 @@ final class WizardController: NSObject {
             if wasOtherActive {
                 otherActive = false
                 renderCurrentStep()
+                if let newH = currentQuestionHandles, next < newH.optionRowViews.count {
+                    animateButtonPress(newH.optionRowViews[next])
+                }
             } else {
                 applySelectionFromState(h, questionIndex: qi)
                 applyProgress(dots: h.progressDots)
                 recomputePrimaryEnabled()
+                if next < h.optionRowViews.count {
+                    animateButtonPress(h.optionRowViews[next])
+                }
             }
         }
     }
@@ -4125,15 +4131,22 @@ final class WizardController: NSObject {
         let qi = state.step
         let total = state.questions[qi].options.count
         if n <= total {
+            let idx = n - 1
             let wasOtherActive = otherActive
-            state.selectPreset(question: qi, optionIndex: n - 1)
+            state.selectPreset(question: qi, optionIndex: idx)
             if wasOtherActive {
                 otherActive = false
                 renderCurrentStep()
+                if let newH = currentQuestionHandles, idx < newH.optionRowViews.count {
+                    animateButtonPress(newH.optionRowViews[idx])
+                }
             } else {
                 applySelectionFromState(h, questionIndex: qi)
                 applyProgress(dots: h.progressDots)
                 recomputePrimaryEnabled()
+                if idx < h.optionRowViews.count {
+                    animateButtonPress(h.optionRowViews[idx])
+                }
             }
         } else if n == total + 1 {
             activateOther(questionIndex: qi)
