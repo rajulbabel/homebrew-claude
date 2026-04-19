@@ -1180,8 +1180,8 @@ private func addStopButtons(to contentView: NSView, handler: StopHandler,
     let buttonY  = bottomY - Layout.buttonTopGap - Layout.buttonHeight
 
     let specs: [(title: String, color: NSColor)] = [
-        ("Go to Terminal", Theme.buttonGreen),
-        ("Ok",             Theme.buttonBlue),
+        (StopLabels.terminal, Theme.buttonGreen),
+        (StopLabels.ok,       Theme.buttonBlue),
     ]
     for (i, spec) in specs.enumerated() {
         let x = Layout.buttonMargin + CGFloat(i) * (buttonW + Layout.buttonGap)
@@ -1189,20 +1189,52 @@ private func addStopButtons(to contentView: NSView, handler: StopHandler,
         btn.title = spec.title
         btn.alignment = .center
         btn.bezelStyle = .rounded
-        btn.isBordered = false
-        btn.wantsLayer = true
-        btn.layer?.cornerRadius = Layout.buttonCornerRadius
-        btn.layer?.backgroundColor = spec.color.withAlphaComponent(Theme.buttonRestAlpha).cgColor
-        btn.contentTintColor = spec.color
-        btn.font = Theme.buttonFont
-        btn.focusRingType = .none
         btn.tag = i
         btn.target = handler
         btn.action = #selector(StopHandler.tapped(_:))
         contentView.addSubview(btn)
         handler.register(button: btn, color: spec.color)
         if i == 1 { panel.defaultButtonCell = btn.cell as? NSButtonCell }
+        applyUnifiedStopButtonSkin(btn, tint: spec.color)
+        addStopKeyboardBadge(to: btn, number: i + 1, tint: spec.color)
     }
+}
+
+/// Same shape as `applyUnifiedButtonSkin` in `claude-approve.swift` — local
+/// copy so both files follow the project's single-file convention.
+private func applyUnifiedStopButtonSkin(_ button: NSButton, tint: NSColor) {
+    button.isBordered = false
+    button.bezelStyle = .rounded
+    button.wantsLayer = true
+    button.layer?.cornerRadius = Layout.stopButtonCornerRadius
+    button.layer?.borderWidth = 1
+    button.layer?.backgroundColor = tint.withAlphaComponent(0.22).cgColor
+    button.layer?.borderColor     = tint.withAlphaComponent(0.55).cgColor
+    button.attributedTitle = NSAttributedString(string: button.title, attributes: [
+        .font: Theme.stopButtonFont,
+        .foregroundColor: Theme.textPrimary,
+        .paragraphStyle: {
+            let ps = NSMutableParagraphStyle()
+            ps.alignment = .center
+            return ps
+        }(),
+    ])
+    button.contentTintColor = Theme.textPrimary
+}
+
+private func addStopKeyboardBadge(to button: NSButton, number: Int, tint: NSColor) {
+    let badge = NSTextField(labelWithString: "\(number)")
+    badge.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+    badge.textColor = tint.withAlphaComponent(0.85)
+    badge.backgroundColor = .clear
+    badge.isBordered = false
+    badge.isEditable = false
+    badge.alignment = .center
+    let size = badge.intrinsicContentSize
+    badge.frame = NSRect(x: 10,
+                         y: (button.frame.height - size.height) / 2,
+                         width: size.width, height: size.height)
+    button.addSubview(badge)
 }
 
 /// Builds and runs the Done notification panel, blocking until the user dismisses it
