@@ -131,21 +131,39 @@ Reset session approvals first: `rm -rf /tmp/claude-hook-sessions/`
     panel appears with a green pill, gist from the last message, and a scrollable
     content block. Auto-dismisses in 15 seconds; `Enter`/`Esc`/`1` dismiss early.
 12. **AskUserQuestion wizard** — trigger `AskUserQuestion` with one or more questions.
-    Wizard panel appears. Work through every sub-case:
-    - **12a.** Single question → primary button says `Submit ⏎`, Return submits, no review step.
-    - **12b.** Three questions → per-question panels with Back/Next, then a Review panel
-      summarising every answer. `Submit Answers ⏎` on Review submits.
+    Wizard panel appears with the lavender `ASKUSERQUESTION` header tag. Work through
+    every sub-case:
+    - **12a.** Single question → primary button says `Submit answers`, Return submits.
+    - **12b.** Three questions → per-question panels, last question's primary button
+      says `Submit answers` and submits the whole bundle.
     - **12c.** "Other" row → click it to morph into a multi-line text area. Type,
-      use Shift+Return for newlines, row grows to fit.
+      use Shift+Return for newlines, row grows to fit. Single-line text sits
+      vertically centred inside the row.
     - **12d.** Type in Other, navigate away and back — typed text is still there.
-    - **12e.** On Review with any question unanswered, Submit is visibly greyed,
-      Return is a no-op.
+    - **12e.** Primary button greys out when current question has no answer;
+      Return is a no-op in that state.
     - **12f.** Keyboard in option mode: `1..N` jumps, ↑/↓ walks options including Other,
-      ←/→ Back/Next, Return Next/Submit, Esc cancels.
+      ←/→ Back/Next, Return Next/Submit.
     - **12g.** Keyboard in Other text mode: digits type into the text, ←/→ caret,
-      ↑/↓ line navigation, Esc exits back to option mode (second Esc cancels).
-    - **12h.** Terminal button still opens the user's terminal (regression check).
-    - **12i.** Cancel closes the panel; Claude sees a "user cancelled" reason.
+      ↑/↓ line navigation, Esc exits back to option mode.
+    - **12h.** Footer is two rows: row 1 `Back` + `Next` / `Submit answers`,
+      row 2 `Go to Terminal` + `Ok`. Ok dismisses the dialog (deny with
+      "user cancelled" reason). Go to Terminal still opens the user's terminal.
+13. **Unified dialog family** — trigger in sequence: a Bash permission, finish an
+    Edit permission, let Claude finish to get the Done dialog, then a multi-
+    question AskUserQuestion. All four panels share: borderless rounded chrome
+    (no title bar, 10pt corners), wizard-style pill buttons with semibold 12pt
+    text and 8pt corners, content container with the subtle `wizardRowBg` /
+    `wizardRowBorder` palette, hairline separator between identity block and
+    tag row. Project name + cwd still visible on Permission and Done.
+14. **Button press animation** — on every button in every dialog, clicking or
+    pressing its keyboard shortcut triggers a brief scale-down + release
+    animation (~180 ms total). No regressions in the click outcome, the deny
+    text-field morph, or any keyboard shortcut.
+15. **Keyboard shortcut badges** — on Permission and Done dialogs each button
+    shows a small monospaced `1` / `2` / `3` numeral at the vertically
+    centred left edge. Pressing the corresponding key triggers the button
+    with the same press animation as a mouse click.
 
 ## Releases
 
