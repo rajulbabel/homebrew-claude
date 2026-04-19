@@ -2287,20 +2287,29 @@ private func installEditMenu() {
 /// - Parameter height: Total panel height in points.
 /// - Returns: A configured floating `NSPanel` centered on the main screen.
 private func makePermissionPanel(height: CGFloat) -> NSPanel {
-    let panel = NSPanel(
+    // Borderless rounded chrome — same shell the wizard uses so the three
+    // dialogs share a silhouette. WizardPanel subclass is required because
+    // a hidden-titlebar panel otherwise refuses to become key, which blocks
+    // keyboard shortcuts.
+    let panel = WizardPanel(
         contentRect: NSRect(x: 0, y: 0, width: Layout.panelWidth, height: height),
-        styleMask: [.titled, .closable, .nonactivatingPanel],
-        backing: .buffered, defer: false
+        styleMask:   [.titled, .nonactivatingPanel, .fullSizeContentView],
+        backing:     .buffered, defer: false
     )
-    panel.title = "Claude Code"
     panel.level = .floating
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-    panel.isMovableByWindowBackground = true
     panel.backgroundColor = Theme.background
-    panel.titleVisibility = .visible
-    panel.appearance = NSAppearance(named: .darkAqua)
+    panel.isOpaque = false
+    panel.hasShadow = true
+    panel.titleVisibility = .hidden
+    panel.titlebarAppearsTransparent = true
+    panel.standardWindowButton(.closeButton)?.isHidden = true
     panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
     panel.standardWindowButton(.zoomButton)?.isHidden = true
+    panel.appearance = NSAppearance(named: .darkAqua)
+    panel.contentView?.wantsLayer = true
+    panel.contentView?.layer?.cornerRadius = Layout.wizardPanelCornerRadius
+    panel.contentView?.layer?.masksToBounds = true
     if let screen = NSScreen.main {
         let frame = screen.visibleFrame
         panel.setFrameOrigin(NSPoint(x: frame.midX - Layout.panelWidth / 2,
