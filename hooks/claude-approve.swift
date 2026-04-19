@@ -414,6 +414,27 @@ enum Layout {
         + sectionGap + panelBottomPadding
 }
 
+// MARK: - Labels
+
+/// Wizard footer button labels, matched verbatim to Claude Code CLI / Desktop
+/// conventions. Single source of truth — never inline these strings elsewhere
+/// so a future wording change touches this file only.
+enum WizardLabels {
+    static let back      = "Back"
+    static let next      = "Next"
+    static let submit    = "Submit answers"
+    static let terminal  = "Go to Terminal"
+    static let ok        = "Ok"
+}
+
+/// Permission-dialog labels that are tool-independent. Tool-dependent
+/// labels (like "Yes, and don't ask again for `cd` *") stay generated
+/// inside `buildPermOptions` where they can parameterize on tool/cmd/domain.
+enum PermissionLabels {
+    static let allowOnce                = "Yes"
+    static let denyWithFeedbackFallback = "No, and tell Claude what to do differently"
+}
+
 // MARK: - Input Parsing
 
 /// Reads and parses the hook input JSON from stdin.

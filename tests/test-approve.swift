@@ -1573,12 +1573,33 @@ func testFormatWizardAnswers() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MARK: - Label Enums
+// ═══════════════════════════════════════════════════════════════════
+
+func testLabelEnums() {
+    test("WizardLabels: exact strings") {
+        assertEq(WizardLabels.back,     "Back")
+        assertEq(WizardLabels.next,     "Next")
+        assertEq(WizardLabels.submit,   "Submit answers")
+        assertEq(WizardLabels.terminal, "Go to Terminal")
+        assertEq(WizardLabels.ok,       "Ok")
+    }
+    test("PermissionLabels: exact strings") {
+        assertEq(PermissionLabels.allowOnce,
+                 "Yes")
+        assertEq(PermissionLabels.denyWithFeedbackFallback,
+                 "No, and tell Claude what to do differently")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // MARK: - Main Entry Point
 // ═══════════════════════════════════════════════════════════════════
 
 @main
 enum ApproveTests {
     static func main() {
+        testLabelEnums()
         testWizardTypes()
         testParseWizardQuestions()
         testWizardState()
