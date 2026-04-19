@@ -1582,6 +1582,7 @@ func testLabelEnums() {
         assertEq(WizardLabels.next,     "Next")
         assertEq(WizardLabels.submit,   "Submit answers")
         assertEq(WizardLabels.terminal, "Go to Terminal")
+        assertEq(WizardLabels.terminalForClaudeDesktop, "Go to Claude Desktop")
         assertEq(WizardLabels.ok,       "Ok")
     }
     test("PermissionLabels: exact strings") {

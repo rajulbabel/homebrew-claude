@@ -444,11 +444,24 @@ enum Layout {
 /// conventions. Single source of truth — never inline these strings elsewhere
 /// so a future wording change touches this file only.
 enum WizardLabels {
-    static let back      = "Back"
-    static let next      = "Next"
-    static let submit    = "Submit answers"
-    static let terminal  = "Go to Terminal"
-    static let ok        = "Ok"
+    static let back                    = "Back"
+    static let next                    = "Next"
+    static let submit                  = "Submit answers"
+    static let terminal                = "Go to Terminal"
+    static let terminalForClaudeDesktop = "Go to Claude Desktop"
+    static let ok                      = "Ok"
+}
+
+/// Returns the label for the "go to parent app" footer button, adapted to
+/// the detected parent. Falls back to the terminal wording when the parent
+/// can't be identified or is a genuine terminal emulator.
+func terminalButtonLabel() -> String {
+    let (_, parentApp) = resolveProcessAncestry()
+    let app = parentApp ?? capturedTerminalApp
+    if app?.bundleIdentifier == "com.anthropic.claudefordesktop" {
+        return WizardLabels.terminalForClaudeDesktop
+    }
+    return WizardLabels.terminal
 }
 
 /// Permission-dialog labels that are tool-independent. Tool-dependent
@@ -3480,7 +3493,7 @@ func buildWizardQuestionPanel(
     // Row 2: Terminal (green) + Ok (neutral gray — intentionally distinct from
     // Row 1's blue so the user never sees two same-colored primary buttons)
     let terminal = makeWizardFooterButton(
-        title: WizardLabels.terminal,
+        title: terminalButtonLabel(),
         fill:  Theme.buttonAllow.withAlphaComponent(0.22),
         border: Theme.buttonAllow.withAlphaComponent(0.55),
         textColor: Theme.textPrimary)
@@ -3755,7 +3768,7 @@ func buildWizardReviewPanel(state: WizardState) -> WizardReviewPanelHandles {
         textColor: Theme.textPrimary)
     footer.addSubview(submit)
 
-    let terminal = makeWizardFooterButton(title: WizardLabels.terminal,
+    let terminal = makeWizardFooterButton(title: terminalButtonLabel(),
         fill: Theme.buttonAllow.withAlphaComponent(0.10),
         border: Theme.buttonAllow.withAlphaComponent(0.35),
         textColor: Theme.textPrimary)

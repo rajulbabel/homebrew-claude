@@ -148,8 +148,21 @@ enum Layout {
 /// Done-dialog button labels. Kept as named constants so a future wording
 /// change touches this file only.
 enum StopLabels {
-    static let terminal = "Go to Terminal"
-    static let ok       = "Ok"
+    static let terminal                = "Go to Terminal"
+    static let terminalForClaudeDesktop = "Go to Claude Desktop"
+    static let ok                      = "Ok"
+}
+
+/// Returns the label for the "go to parent app" button in the Done dialog,
+/// adapted to the detected parent app. Same pattern as the copy in
+/// `claude-approve.swift`.
+func terminalButtonLabel() -> String {
+    let (_, parentApp) = resolveProcessAncestry()
+    let app = parentApp ?? capturedTerminalApp
+    if app?.bundleIdentifier == "com.anthropic.claudefordesktop" {
+        return StopLabels.terminalForClaudeDesktop
+    }
+    return StopLabels.terminal
 }
 
 // MARK: - Input Parsing
@@ -1244,8 +1257,8 @@ private func addStopButtons(to contentView: NSView, handler: StopHandler,
     let buttonY  = bottomY - Layout.buttonTopGap - Layout.buttonHeight
 
     let specs: [(title: String, color: NSColor)] = [
-        (StopLabels.terminal, Theme.buttonGreen),
-        (StopLabels.ok,       Theme.buttonBlue),
+        (terminalButtonLabel(), Theme.buttonGreen),
+        (StopLabels.ok,         Theme.buttonBlue),
     ]
     for (i, spec) in specs.enumerated() {
         let x = Layout.buttonMargin + CGFloat(i) * (buttonW + Layout.buttonGap)
