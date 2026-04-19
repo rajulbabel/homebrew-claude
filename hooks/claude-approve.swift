@@ -3170,6 +3170,267 @@ func makeWizardFooterButton(title: String, fill: NSColor, border: NSColor, textC
     return b
 }
 
+/// Handles into a review panel for controller wiring.
+struct WizardReviewPanelHandles {
+    let root: NSView
+    let reviewRows: [NSView]       // one per question, clickable
+    let editButtons: [NSButton]    // explicit "edit" links on each row
+    let backButton: NSButton
+    let submitButton: NSButton     // disabled when not all answered
+    let terminalButton: NSButton
+    let cancelButton: NSButton
+    let progressDots: [NSView]
+}
+
+/// Builds the review panel. Each row summarises one question's answer.
+/// Submit is styled enabled here; the controller greys it when `allAnswered`
+/// is false via `applyWizardSubmitEnabled`.
+func buildWizardReviewPanel(state: WizardState) -> WizardReviewPanelHandles {
+    let width = Layout.panelWidth
+    let root = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 100))
+    root.wantsLayer = true
+
+    // Header band
+    let header = NSView(frame: NSRect(x: 0, y: 0, width: width, height: Layout.wizardHeaderHeight))
+    header.wantsLayer = true
+    header.layer?.backgroundColor = Theme.background.cgColor
+    let tag = NSTextField(labelWithString: "ASKUSERQUESTION · REVIEW")
+    tag.font = Theme.wizardHeaderTagFont
+    tag.textColor = Theme.toolTagColors["AskUserQuestion"] ?? Theme.mcpTag
+    tag.frame = NSRect(x: Layout.wizardBodyPaddingH, y: Layout.wizardHeaderLabelY,
+                       width: Layout.wizardHeaderReviewTagWidth,
+                       height: Layout.wizardHeaderLabelHeight)
+    header.addSubview(tag)
+    let answered = state.answers.filter { $0 != nil }.count
+    let counter = NSTextField(labelWithString: "\(answered) of \(state.questions.count) answered")
+    counter.font = Theme.wizardHeaderCounterFont
+    counter.textColor = Theme.textSecondary
+    counter.alignment = .right
+    counter.frame = NSRect(
+        x: width - Layout.wizardBodyPaddingH - Layout.wizardHeaderReviewCounterWidth,
+        y: Layout.wizardHeaderLabelY,
+        width: Layout.wizardHeaderReviewCounterWidth,
+        height: Layout.wizardHeaderLabelHeight)
+    header.addSubview(counter)
+    root.addSubview(header)
+
+    // Body
+    let body = NSView(frame: .zero)
+
+    let title = NSTextField(labelWithString: "Review your answers")
+    title.font = Theme.wizardReviewTitleFont
+    title.textColor = Theme.textPrimary
+    title.frame = NSRect(x: Layout.wizardBodyPaddingH, y: 0,
+                         width: width - 2 * Layout.wizardBodyPaddingH,
+                         height: Layout.wizardReviewTitleHeight)
+    body.addSubview(title)
+
+    var reviewRows: [NSView] = []
+    var editButtons: [NSButton] = []
+    let rowSpacing = Layout.wizardReviewRowSpacing
+    let rowHeight = Layout.wizardReviewRowHeight
+
+    for (i, q) in state.questions.enumerated() {
+        let row = NSView(frame: .zero)
+        row.wantsLayer = true
+        row.layer?.cornerRadius = 6
+        row.layer?.backgroundColor = NSColor(calibratedWhite: 1.0, alpha: 0.02).cgColor
+        row.layer?.borderWidth = 1
+        row.layer?.borderColor = Theme.wizardRowBorder.cgColor
+
+        let pillFont = Theme.wizardReviewPillFont
+        let pill = NSButton(title: q.header.uppercased(), target: nil, action: nil)
+        pill.isBordered = false
+        pill.wantsLayer = true
+        pill.layer?.cornerRadius = 3
+        pill.layer?.backgroundColor = (Theme.toolTagColors["AskUserQuestion"] ?? Theme.mcpTag).cgColor
+        pill.attributedTitle = NSAttributedString(string: q.header.uppercased(), attributes: [
+            .font: pillFont,
+            .foregroundColor: Theme.background,
+        ])
+        let pillSize = (q.header.uppercased() as NSString).size(withAttributes: [.font: pillFont])
+        pill.frame = NSRect(x: 12, y: 37,
+            width: ceil(pillSize.width) + Layout.wizardReviewPillHPadding,
+            height: Layout.wizardReviewPillHeight)
+        row.addSubview(pill)
+
+        let qLabel = NSTextField(labelWithString: q.question)
+        qLabel.font = Theme.wizardReviewRowQuestionFont
+        qLabel.textColor = Theme.textSecondary
+        qLabel.lineBreakMode = .byTruncatingTail
+        qLabel.frame = NSRect(x: pill.frame.maxX + 8, y: 37,
+            width: width - pill.frame.maxX - 80, height: Layout.wizardHeaderLabelHeight)
+        row.addSubview(qLabel)
+
+        let edit = NSButton(title: "edit", target: nil, action: nil)
+        edit.isBordered = false
+        edit.attributedTitle = NSAttributedString(string: "edit", attributes: [
+            .font: Theme.wizardReviewEditFont,
+            .foregroundColor: Theme.buttonAllow,
+        ])
+        edit.frame = NSRect(x: width - Layout.wizardBodyPaddingH * 2 - 50, y: 37,
+            width: 50, height: Layout.wizardHeaderLabelHeight)
+        edit.tag = i
+        row.addSubview(edit)
+        editButtons.append(edit)
+
+        let answerText: String
+        switch state.answers[i] {
+        case .preset(let idx):
+            let opt = q.options[idx]
+            answerText = opt.description.isEmpty
+                ? "✓ \(opt.label)"
+                : "✓ \(opt.label) · \(opt.description)"
+        case .custom(let text):
+            let firstLine = text.components(separatedBy: "\n").first ?? text
+            answerText = "✓ \(firstLine) · custom"
+        case .none:
+            answerText = "⋯ (not answered yet)"
+        }
+        let ans = NSTextField(labelWithString: answerText)
+        ans.font = Theme.wizardReviewRowAnswerFont
+        ans.textColor = Theme.textPrimary
+        ans.lineBreakMode = .byTruncatingTail
+        ans.frame = NSRect(x: 12, y: 10,
+            width: width - 2 * Layout.wizardBodyPaddingH - 24,
+            height: Layout.wizardHeaderLabelHeight)
+        row.addSubview(ans)
+
+        row.frame = NSRect(x: Layout.wizardBodyPaddingH, y: 0,
+            width: width - 2 * Layout.wizardBodyPaddingH, height: rowHeight)
+
+        // Click on row body (not on edit button) triggers the same action as edit
+        let click = NSClickGestureRecognizer(target: nil, action: nil)
+        row.addGestureRecognizer(click)
+        reviewRows.append(row)
+        body.addSubview(row)
+    }
+
+    // Progress dots (all green on review)
+    var progressDots: [NSView] = []
+    for _ in 0..<state.questions.count {
+        let dot = NSView(frame: NSRect(x: 0, y: 0,
+            width: Layout.wizardProgressDotWidth, height: Layout.wizardProgressDotHeight))
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = Layout.wizardProgressDotHeight / 2
+        dot.layer?.backgroundColor = Theme.wizardProgressActive.cgColor
+        body.addSubview(dot)
+        progressDots.append(dot)
+    }
+
+    // Body layout (top-down → flip to AppKit)
+    let titleTop = Layout.wizardBodyPaddingV
+    let rowsTopStart = titleTop + Layout.wizardReviewTitleHeight + Layout.wizardBodyGapAfterQuestion
+    let rowsTotalHeight = CGFloat(state.questions.count) * rowHeight +
+        CGFloat(max(0, state.questions.count - 1)) * rowSpacing
+    let progressTop = rowsTopStart + rowsTotalHeight + Layout.wizardProgressTopPadding
+    let bodyHeight = progressTop + Layout.wizardProgressDotHeight + Layout.wizardBodyBottomPadding
+
+    body.frame = NSRect(x: 0, y: Layout.wizardFooterHeight, width: width, height: bodyHeight)
+    title.frame.origin.y = bodyHeight - titleTop - Layout.wizardReviewTitleHeight
+
+    var yCursor = bodyHeight - rowsTopStart - rowHeight
+    for r in reviewRows {
+        r.frame.origin.y = yCursor
+        yCursor -= (rowHeight + rowSpacing)
+    }
+    let dotsTotalWidth = CGFloat(state.questions.count) * Layout.wizardProgressDotWidth +
+        CGFloat(max(0, state.questions.count - 1)) * Layout.wizardProgressDotGap
+    var dx = (width - dotsTotalWidth) / 2
+    let dotY = bodyHeight - progressTop - Layout.wizardProgressDotHeight
+    for dot in progressDots {
+        dot.frame.origin = NSPoint(x: dx, y: dotY)
+        dx += Layout.wizardProgressDotWidth + Layout.wizardProgressDotGap
+    }
+
+    root.addSubview(body)
+
+    // Footer
+    let footer = NSView(frame: NSRect(x: 0, y: 0, width: width, height: Layout.wizardFooterHeight))
+    footer.wantsLayer = true
+    footer.layer?.backgroundColor = Theme.codeBackground.cgColor
+
+    let back = makeWizardFooterButton(title: "← Back",
+        fill: Theme.buttonPersist.withAlphaComponent(0.06),
+        border: Theme.buttonPersist.withAlphaComponent(0.12),
+        textColor: Theme.textPrimary)
+    back.frame = NSRect(x: Layout.wizardBodyPaddingH,
+        y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
+        width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
+    footer.addSubview(back)
+
+    let submit = makeWizardFooterButton(title: "Submit Answers ⏎",
+        fill: Theme.buttonAllow.withAlphaComponent(0.22),
+        border: Theme.buttonAllow.withAlphaComponent(0.55),
+        textColor: Theme.textPrimary)
+    footer.addSubview(submit)
+
+    let terminal = makeWizardFooterButton(title: "Terminal",
+        fill: Theme.buttonAllow.withAlphaComponent(0.10),
+        border: Theme.buttonAllow.withAlphaComponent(0.35),
+        textColor: Theme.textPrimary)
+    terminal.frame = NSRect(x: 0, y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
+        width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
+    footer.addSubview(terminal)
+
+    let cancel = makeWizardFooterButton(title: "Cancel",
+        fill: Theme.buttonDeny.withAlphaComponent(0.10),
+        border: Theme.buttonDeny.withAlphaComponent(0.35),
+        textColor: Theme.textPrimary)
+    cancel.frame = NSRect(x: 0, y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
+        width: Layout.wizardFooterSideButtonWidth, height: Layout.wizardFooterButtonHeight)
+    footer.addSubview(cancel)
+
+    let backRightEdge = back.frame.maxX + Layout.wizardFooterGap
+    let rightReserved = Layout.wizardFooterSideButtonWidth * 2 + Layout.wizardFooterGap * 2
+    submit.frame = NSRect(
+        x: backRightEdge,
+        y: (Layout.wizardFooterHeight - Layout.wizardFooterButtonHeight) / 2,
+        width: width - backRightEdge - rightReserved - Layout.wizardBodyPaddingH,
+        height: Layout.wizardFooterButtonHeight)
+    terminal.frame.origin.x = submit.frame.maxX + Layout.wizardFooterGap
+    cancel.frame.origin.x = terminal.frame.maxX + Layout.wizardFooterGap
+
+    root.addSubview(footer)
+
+    let rootHeight = Layout.wizardHeaderHeight + bodyHeight + Layout.wizardFooterHeight
+    root.frame.size = NSSize(width: width, height: rootHeight)
+    header.frame.origin.y = rootHeight - Layout.wizardHeaderHeight
+    body.frame.origin.y = Layout.wizardFooterHeight
+
+    return WizardReviewPanelHandles(
+        root: root,
+        reviewRows: reviewRows,
+        editButtons: editButtons,
+        backButton: back,
+        submitButton: submit,
+        terminalButton: terminal,
+        cancelButton: cancel,
+        progressDots: progressDots)
+}
+
+/// Applies the disabled style to a Submit/Next button when the wizard is
+/// missing answers; restores enabled style otherwise.
+func applyWizardSubmitEnabled(_ button: NSButton, enabled: Bool, isSubmit: Bool) {
+    button.isEnabled = enabled
+    if enabled {
+        let color = isSubmit ? Theme.buttonAllow : Theme.buttonPersist
+        button.layer?.backgroundColor = color.withAlphaComponent(isSubmit ? 0.22 : 0.22).cgColor
+        button.layer?.borderColor = color.withAlphaComponent(isSubmit ? 0.55 : 0.50).cgColor
+        button.attributedTitle = NSAttributedString(string: button.title, attributes: [
+            .font: Theme.wizardFooterButtonFont,
+            .foregroundColor: Theme.textPrimary,
+        ])
+    } else {
+        button.layer?.backgroundColor = Theme.wizardButtonDisabledBg.cgColor
+        button.layer?.borderColor = Theme.wizardButtonDisabledBorder.cgColor
+        button.attributedTitle = NSAttributedString(string: button.title, attributes: [
+            .font: Theme.wizardFooterButtonFont,
+            .foregroundColor: Theme.wizardButtonDisabledText,
+        ])
+    }
+}
+
 // MARK: - Dialog Construction
 
 /// Builds and runs the permission dialog, returning the user's selected result key.
