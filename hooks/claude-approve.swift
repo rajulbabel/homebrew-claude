@@ -138,6 +138,10 @@ struct WizardOption {
 enum WizardAnswer: Equatable {
     case preset(index: Int)
     case custom(text: String)
+    /// Multi-select answer: any subset of preset indices, plus an optional
+    /// custom string. The empty `presets` set with `custom = nil` is *not*
+    /// a valid stored answer (state methods normalise that back to `nil`).
+    case multi(presets: Set<Int>, custom: String?)
 }
 
 /// Visual style for an option row's left-edge indicator.
@@ -2846,7 +2850,14 @@ final class WizardState {
 
     /// True if every question has a non-nil answer.
     var allAnswered: Bool {
-        answers.allSatisfy { $0 != nil }
+        answers.allSatisfy { a in
+            switch a {
+            case .none: return false
+            case .some(.preset), .some(.custom): return true
+            case .some(.multi(let p, let c)):
+                return p.count + (c == nil ? 0 : 1) >= 1
+            }
+        }
     }
 
     /// Commits a preset-option pick as the answer to the given question.
@@ -2874,6 +2885,72 @@ final class WizardState {
     func setPending(question: Int, text: String) {
         guard question >= 0, question < pendingCustom.count else { return }
         pendingCustom[question] = text
+    }
+
+    /// Multi-select: flips `optionIndex` in the answer's preset set. Creates
+    /// the answer if needed; normalises an emptied answer back to `nil`.
+    func togglePreset(question: Int, optionIndex: Int) {
+        guard question >= 0, question < answers.count else { return }
+        var presets: Set<Int> = []
+        var custom: String? = nil
+        if case .multi(let p, let c) = answers[question] {
+            presets = p
+            custom = c
+        }
+        if presets.contains(optionIndex) {
+            presets.remove(optionIndex)
+        } else {
+            presets.insert(optionIndex)
+        }
+        answers[question] = (presets.isEmpty && custom == nil)
+            ? nil
+            : .multi(presets: presets, custom: custom)
+    }
+
+    /// Multi-select: ticks or unticks the Other inclusion. Ticking with an
+    /// empty pending string is a no-op (matches the auto-tick contract).
+    func toggleCustom(question: Int, on: Bool) {
+        guard question >= 0, question < answers.count else { return }
+        var presets: Set<Int> = []
+        if case .multi(let p, _) = answers[question] { presets = p }
+        if on {
+            let trimmed = pendingCustom[question]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            answers[question] = .multi(presets: presets, custom: pendingCustom[question])
+        } else {
+            answers[question] = presets.isEmpty
+                ? nil
+                : .multi(presets: presets, custom: nil)
+        }
+    }
+
+    /// Multi-select: every keystroke in the Other text view routes here.
+    /// Updates `pendingCustom`; if Other is currently ticked, updates the
+    /// `.multi.custom` value in place. Empty (or all-whitespace) text on a
+    /// previously-ticked Other unticks the box. Auto-ticks on first non-empty
+    /// keystroke when no custom answer was set.
+    func setMultiCustomText(question: Int, text: String) {
+        guard question >= 0, question < answers.count else { return }
+        pendingCustom[question] = text
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var presets: Set<Int> = []
+        var custom: String? = nil
+        if case .multi(let p, let c) = answers[question] {
+            presets = p
+            custom = c
+        }
+        if custom != nil {
+            if trimmed.isEmpty {
+                answers[question] = presets.isEmpty
+                    ? nil
+                    : .multi(presets: presets, custom: nil)
+            } else {
+                answers[question] = .multi(presets: presets, custom: text)
+            }
+        } else if !trimmed.isEmpty {
+            answers[question] = .multi(presets: presets, custom: text)
+        }
     }
 }
 
@@ -2909,6 +2986,9 @@ func buildWizardAnswersDict(state: WizardState) -> [String: String] {
             }
         case .custom(let text):
             dict[q.question] = text
+        case .multi:
+            // Real handling lands in Task 10. Skip for now so the build stays green.
+            continue
         case .none:
             continue
         }
@@ -2936,6 +3016,10 @@ func formatWizardAnswers(state: WizardState) -> String {
             for cont in parts.dropFirst() {
                 lines.append("     \(cont)")
             }
+        case .multi:
+            // Real handling lands in Task 10. Print a placeholder so the line
+            // count stays sane in the meantime.
+            lines.append("   → (multi-select pending)")
         case .none:
             lines.append("   → (no answer)")
         }
@@ -3895,6 +3979,10 @@ func buildWizardReviewPanel(state: WizardState) -> WizardReviewPanelHandles {
         case .custom(let text):
             let firstLine = text.components(separatedBy: "\n").first ?? text
             answerText = "✓ \(firstLine) · custom"
+        case .multi:
+            // Real handling lands in Task 10. Show a neutral placeholder so the
+            // review row still renders while the multi-select UI is wired up.
+            answerText = "✓ (multi-select)"
         case .none:
             answerText = "⋯ (not answered yet)"
         }
@@ -4486,6 +4574,10 @@ final class WizardController: NSObject {
         switch state.answers[qi] {
         case .preset(let i): current = i
         case .custom:         current = total - 1
+        case .multi:
+            // Real handling lands in Task 8 (keyboard navigation for multi-
+            // select). Treat as no anchor for now so the build stays green.
+            current = otherActive ? (total - 1) : -1
         case .none:           current = otherActive ? (total - 1) : -1
         }
         let next = (current + delta + total) % total

@@ -1339,6 +1339,14 @@ func testWizardTypes() {
         assertFalse(WizardAnswer.custom(text: "hello") == WizardAnswer.custom(text: "world"))
         assertFalse(WizardAnswer.custom(text: "x") == WizardAnswer.preset(index: 0))
     }
+    test("WizardAnswer.multi equality") {
+        assertTrue(WizardAnswer.multi(presets: [0, 2], custom: nil)
+                == WizardAnswer.multi(presets: [0, 2], custom: nil))
+        assertFalse(WizardAnswer.multi(presets: [0, 2], custom: nil)
+                 == WizardAnswer.multi(presets: [0, 2], custom: "x"))
+        assertFalse(WizardAnswer.multi(presets: [0, 2], custom: nil)
+                 == WizardAnswer.multi(presets: [0], custom: nil))
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1535,6 +1543,83 @@ func testWizardState() {
     test("WizardState: lastStep index depends on question count") {
         assertEq(WizardState(questions: [q1]).lastStep, 0)
         assertEq(WizardState(questions: [q1, q2]).lastStep, 2)
+    }
+
+    let qMulti = WizardQuestion(
+        header: "X", question: "Pick any",
+        options: [WizardOption(label: "A", description: ""),
+                  WizardOption(label: "B", description: ""),
+                  WizardOption(label: "C", description: "")],
+        multiSelect: true)
+
+    test("WizardState.togglePreset: first toggle initialises .multi") {
+        let s = WizardState(questions: [qMulti])
+        s.togglePreset(question: 0, optionIndex: 1)
+        assertTrue(s.answers[0] == WizardAnswer.multi(presets: [1], custom: nil))
+    }
+    test("WizardState.togglePreset: second toggle removes the index") {
+        let s = WizardState(questions: [qMulti])
+        s.togglePreset(question: 0, optionIndex: 1)
+        s.togglePreset(question: 0, optionIndex: 1)
+        assertTrue(s.answers[0] == nil)
+    }
+    test("WizardState.togglePreset: adding multiple presets") {
+        let s = WizardState(questions: [qMulti])
+        s.togglePreset(question: 0, optionIndex: 0)
+        s.togglePreset(question: 0, optionIndex: 2)
+        assertTrue(s.answers[0] == WizardAnswer.multi(presets: [0, 2], custom: nil))
+    }
+    test("WizardState.toggleCustom: on with non-empty pending captures text") {
+        let s = WizardState(questions: [qMulti])
+        s.setPending(question: 0, text: "hello")
+        s.toggleCustom(question: 0, on: true)
+        assertTrue(s.answers[0] == WizardAnswer.multi(presets: [], custom: "hello"))
+    }
+    test("WizardState.toggleCustom: on with empty pending is a no-op") {
+        let s = WizardState(questions: [qMulti])
+        s.toggleCustom(question: 0, on: true)
+        assertTrue(s.answers[0] == nil)
+    }
+    test("WizardState.toggleCustom: off clears only custom, leaves presets") {
+        let s = WizardState(questions: [qMulti])
+        s.togglePreset(question: 0, optionIndex: 0)
+        s.setPending(question: 0, text: "extra")
+        s.toggleCustom(question: 0, on: true)
+        s.toggleCustom(question: 0, on: false)
+        assertTrue(s.answers[0] == WizardAnswer.multi(presets: [0], custom: nil))
+    }
+    test("WizardState.setMultiCustomText: auto-ticks on first non-empty keystroke") {
+        let s = WizardState(questions: [qMulti])
+        s.setMultiCustomText(question: 0, text: "h")
+        assertTrue(s.answers[0] == WizardAnswer.multi(presets: [], custom: "h"))
+    }
+    test("WizardState.setMultiCustomText: updates ticked custom in place") {
+        let s = WizardState(questions: [qMulti])
+        s.setMultiCustomText(question: 0, text: "h")
+        s.setMultiCustomText(question: 0, text: "hello")
+        assertTrue(s.answers[0] == WizardAnswer.multi(presets: [], custom: "hello"))
+    }
+    test("WizardState.setMultiCustomText: clearing text removes custom") {
+        let s = WizardState(questions: [qMulti])
+        s.setMultiCustomText(question: 0, text: "h")
+        s.setMultiCustomText(question: 0, text: "")
+        if s.answers[0] == nil {
+            // Acceptable: normalising an empty answer back to nil.
+            assertTrue(true)
+        } else if case .multi(let p, let c) = s.answers[0] {
+            assertEq(p.count, 0)
+            assertTrue(c == nil)
+        } else {
+            assertTrue(false, "expected .multi case or nil")
+        }
+    }
+    test("WizardState.allAnswered: multi requires at least one selection") {
+        let s = WizardState(questions: [qMulti])
+        assertFalse(s.allAnswered)
+        s.togglePreset(question: 0, optionIndex: 0)
+        assertTrue(s.allAnswered)
+        s.togglePreset(question: 0, optionIndex: 0)
+        assertFalse(s.allAnswered)
     }
 }
 
