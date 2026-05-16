@@ -1316,7 +1316,8 @@ func testWizardTypes() {
             options: [
                 WizardOption(label: "Postgres", description: "SQL"),
                 WizardOption(label: "SQLite",   description: "Embedded"),
-            ]
+            ],
+            multiSelect: false
         )
         assertEq(q.header, "DB")
         assertEq(q.question, "Which database?")
@@ -1428,6 +1429,37 @@ func testParseWizardQuestions() {
         assertEq(qs.count, 1)
         assertEq(qs[0].header, "X")
     }
+    test("parseWizardQuestions: multiSelect true is read") {
+        let input: [String: Any] = [
+            "questions": [
+                ["header": "X", "question": "Q?",
+                 "multiSelect": true,
+                 "options": [["label": "A"]]],
+            ],
+        ]
+        let qs = parseWizardQuestions(from: input)
+        assertTrue(qs[0].multiSelect)
+    }
+    test("parseWizardQuestions: missing multiSelect defaults to false") {
+        let input: [String: Any] = [
+            "questions": [
+                ["header": "X", "question": "Q?", "options": [["label": "A"]]],
+            ],
+        ]
+        let qs = parseWizardQuestions(from: input)
+        assertFalse(qs[0].multiSelect)
+    }
+    test("parseWizardQuestions: non-bool multiSelect defaults to false") {
+        let input: [String: Any] = [
+            "questions": [
+                ["header": "X", "question": "Q?",
+                 "multiSelect": "yes",
+                 "options": [["label": "A"]]],
+            ],
+        ]
+        let qs = parseWizardQuestions(from: input)
+        assertFalse(qs[0].multiSelect)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1438,11 +1470,13 @@ func testWizardState() {
     let q1 = WizardQuestion(
         header: "DB", question: "Which database?",
         options: [WizardOption(label: "PG", description: ""),
-                  WizardOption(label: "SQLite", description: "")])
+                  WizardOption(label: "SQLite", description: "")],
+        multiSelect: false)
     let q2 = WizardQuestion(
         header: "ENV", question: "Prod?",
         options: [WizardOption(label: "Yes", description: ""),
-                  WizardOption(label: "No", description: "")])
+                  WizardOption(label: "No", description: "")],
+        multiSelect: false)
 
     test("WizardState: starts unanswered") {
         let s = WizardState(questions: [q1, q2])
@@ -1581,11 +1615,13 @@ func testFormatWizardAnswers() {
     let q1 = WizardQuestion(
         header: "DB", question: "Which database?",
         options: [WizardOption(label: "Postgres", description: "SQL"),
-                  WizardOption(label: "SQLite", description: "Embedded")])
+                  WizardOption(label: "SQLite", description: "Embedded")],
+        multiSelect: false)
     let q2 = WizardQuestion(
         header: "TEST", question: "Run tests?",
         options: [WizardOption(label: "Yes", description: ""),
-                  WizardOption(label: "No", description: "")])
+                  WizardOption(label: "No", description: "")],
+        multiSelect: false)
 
     test("formatWizardAnswers: single preset") {
         let s = WizardState(questions: [q1])
@@ -1619,7 +1655,8 @@ func testFormatWizardAnswers() {
     }
     test("formatWizardAnswers: empty header omits the bracket pill") {
         let q = WizardQuestion(header: "", question: "Q?",
-            options: [WizardOption(label: "Yes", description: "")])
+            options: [WizardOption(label: "Yes", description: "")],
+            multiSelect: false)
         let s = WizardState(questions: [q])
         s.selectPreset(question: 0, optionIndex: 0)
         let out = formatWizardAnswers(state: s)

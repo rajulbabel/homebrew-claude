@@ -120,6 +120,9 @@ struct WizardQuestion {
     let header: String
     let question: String
     let options: [WizardOption]
+    /// True when the question accepts more than one selection. Defaults to
+    /// false; mirrors the optional `multiSelect` field in the tool input.
+    let multiSelect: Bool
 }
 
 /// A preset option inside a `WizardQuestion`.
@@ -2795,7 +2798,10 @@ func parseWizardQuestions(from toolInput: [String: Any]) -> [WizardQuestion] {
                 opts.append(WizardOption(label: label, description: desc))
             }
         }
-        result.append(WizardQuestion(header: header, question: question, options: opts))
+        let multi = dict["multiSelect"] as? Bool ?? false
+        result.append(WizardQuestion(
+            header: header, question: question,
+            options: opts, multiSelect: multi))
     }
     return result
 }
