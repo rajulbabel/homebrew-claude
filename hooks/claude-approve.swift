@@ -261,6 +261,10 @@ enum Theme {
     static let wizardRowBorder             = NSColor(calibratedWhite: 1.0, alpha: 0.08)
     static let wizardRowSelectedBg         = buttonAllow.withAlphaComponent(0.14)
     static let wizardRowSelectedBorder     = buttonAllow.withAlphaComponent(0.55)
+    /// Outline used on the keyboard-focused row of a multi-select page.
+    /// Painted on top of the normal row border so the user can see which row
+    /// `↑`/`↓` and `Space` are pointing at.
+    static let wizardRowFocusBorder = NSColor(calibratedRed: 0.36, green: 0.52, blue: 0.90, alpha: 0.85)
     /// Color painted inside the filled radio to produce the ring hole.
     /// Aliases `background` so the hole stays flush with the panel.
     static let wizardRadioInnerGap         = background
@@ -386,6 +390,7 @@ enum Layout {
     static let wizardRowPaddingH: CGFloat = 12
     static let wizardRowPaddingV: CGFloat = 10
     static let wizardRowCornerRadius: CGFloat = 8
+    static let wizardRowFocusBorderWidth: CGFloat = 2
     static let wizardRadioSize: CGFloat = 14
     static let wizardRadioInnerRing: CGFloat = 2.5
     static let wizardRadioBorderWidth: CGFloat = 2
@@ -4280,6 +4285,7 @@ final class WizardController: NSObject {
         for row in h.optionRowViews {
             row.layer?.backgroundColor = Theme.wizardRowBg.cgColor
             row.layer?.borderColor = Theme.wizardRowBorder.cgColor
+            row.layer?.borderWidth = 1
         }
 
         if state.questions[questionIndex].multiSelect {
@@ -4295,10 +4301,20 @@ final class WizardController: NSObject {
                 h.otherRow.setSelected(otherActive)
             }
             h.otherRow.setText(state.pendingCustom[questionIndex])
+            // Overlay keyboard focus outline on the focused row.
+            if focusedRow >= 0, focusedRow < h.optionRowViews.count {
+                let row = h.optionRowViews[focusedRow]
+                row.layer?.borderColor = Theme.wizardRowFocusBorder.cgColor
+                row.layer?.borderWidth = Layout.wizardRowFocusBorderWidth
+            } else if focusedRow == h.optionRowViews.count {
+                h.otherRow.layer?.borderColor = Theme.wizardRowFocusBorder.cgColor
+                h.otherRow.layer?.borderWidth = Layout.wizardRowFocusBorderWidth
+            }
             return
         }
 
         // Single: existing behaviour, unchanged.
+        h.otherRow.layer?.borderWidth = 1
         let isCustom: Bool = { if case .custom = answer { return true } else { return false } }()
         h.otherRow.setSelected(otherActive || isCustom)
         if !otherActive, case .preset(let idx) = answer, idx < h.optionRowViews.count {
@@ -4677,9 +4693,15 @@ final class WizardController: NSObject {
                 return true
             case 126:  // up arrow
                 focusedRow = (focusedRow - 1 + nPresets + 1) % (nPresets + 1)
+                if let h = self.currentQuestionHandles {
+                    self.applySelectionFromState(h, questionIndex: qi)
+                }
                 return true
             case 125:  // down arrow
                 focusedRow = (focusedRow + 1) % (nPresets + 1)
+                if let h = self.currentQuestionHandles {
+                    self.applySelectionFromState(h, questionIndex: qi)
+                }
                 return true
             default:
                 break  // Fall through to shared Return / Esc / arrows handling
