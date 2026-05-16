@@ -4246,25 +4246,35 @@ final class WizardController: NSObject {
     private func applySelectionFromState(_ h: WizardQuestionPanelHandles, questionIndex: Int) {
         guard questionIndex >= 0, questionIndex < state.questions.count else { return }
         let answer = state.answers[questionIndex]
-        // Deselect all preset rows
         for row in h.optionRowViews {
             row.layer?.backgroundColor = Theme.wizardRowBg.cgColor
             row.layer?.borderColor = Theme.wizardRowBorder.cgColor
         }
+
+        if state.questions[questionIndex].multiSelect {
+            // Multi: paint every ticked preset; Other row ticked iff custom != nil.
+            if case .multi(let presets, let custom) = answer {
+                for idx in presets where idx < h.optionRowViews.count {
+                    let row = h.optionRowViews[idx]
+                    row.layer?.backgroundColor = Theme.wizardRowSelectedBg.cgColor
+                    row.layer?.borderColor = Theme.wizardRowSelectedBorder.cgColor
+                }
+                h.otherRow.setSelected(custom != nil || otherActive)
+            } else {
+                h.otherRow.setSelected(otherActive)
+            }
+            h.otherRow.setText(state.pendingCustom[questionIndex])
+            return
+        }
+
+        // Single: existing behaviour, unchanged.
         let isCustom: Bool = { if case .custom = answer { return true } else { return false } }()
-        // Other row highlight: on when the text field is currently active or
-        // when the committed answer is .custom.
         h.otherRow.setSelected(otherActive || isCustom)
-        // Skip the preset-row highlight while Other is the active input — otherwise
-        // the previously-selected preset would stay visually highlighted alongside
-        // Other, making it look like two options are selected simultaneously.
         if !otherActive, case .preset(let idx) = answer, idx < h.optionRowViews.count {
             let row = h.optionRowViews[idx]
             row.layer?.backgroundColor = Theme.wizardRowSelectedBg.cgColor
             row.layer?.borderColor = Theme.wizardRowSelectedBorder.cgColor
         }
-        // Restore pending custom text into the text view so its summary (in
-        // rest mode) and its contents (in active mode) match state.
         h.otherRow.setText(state.pendingCustom[questionIndex])
     }
 
@@ -4286,10 +4296,14 @@ final class WizardController: NSObject {
         }
         h.otherRow.onTextChange = { [weak self] text in
             guard let self = self else { return }
-            self.state.setPending(question: questionIndex, text: text)
-            // If Other is the selected answer, update answers in real-time too
-            if case .custom = self.state.answers[questionIndex] {
-                self.state.commitCustom(question: questionIndex, text: text)
+            if self.state.questions[questionIndex].multiSelect {
+                self.state.setMultiCustomText(question: questionIndex, text: text)
+            } else {
+                self.state.setPending(question: questionIndex, text: text)
+                // If Other is the selected answer, update answers in real-time too
+                if case .custom = self.state.answers[questionIndex] {
+                    self.state.commitCustom(question: questionIndex, text: text)
+                }
             }
             self.recomputePrimaryEnabled()
         }
@@ -4337,14 +4351,19 @@ final class WizardController: NSObject {
     @objc private func onPresetClicked(_ g: WizardClickGesture) {
         guard let h = currentQuestionHandles else { return }
         let qi = state.step
-        let wasOtherActive = otherActive
-        // Press animation on the clicked preset row.
         if g.payload >= 0, g.payload < h.optionRowViews.count {
             animateButtonPress(h.optionRowViews[g.payload])
         }
+        if state.questions[qi].multiSelect {
+            state.togglePreset(question: qi, optionIndex: g.payload)
+            applySelectionFromState(h, questionIndex: qi)
+            applyProgress(dots: h.progressDots)
+            recomputePrimaryEnabled()
+            return
+        }
+        let wasOtherActive = otherActive
         state.selectPreset(question: qi, optionIndex: g.payload)
         if wasOtherActive {
-            // Collapse Other row before applying selection colors.
             otherActive = false
             renderCurrentStep()
         } else {
@@ -4454,8 +4473,37 @@ final class WizardController: NSObject {
     /// Expands the Other row for typing — the row itself adjusts its height
     /// via `refreshHeight` and broadcasts a delta the controller applies to
     /// siblings + panel in `applyOtherRowDelta`. No full re-render.
+    ///
+    /// On multi-select pages a tap flips the Other row's inclusion in the
+    /// answer set: if it was already ticked (custom != nil) we untick it and
+    /// deactivate typing; otherwise we enter typing mode and, if there's
+    /// already pending text, auto-tick to match the keystroke-path contract.
     private func activateOther(questionIndex qi: Int) {
         guard let h = currentQuestionHandles else { return }
+        if state.questions[qi].multiSelect {
+            let alreadyTicked: Bool = {
+                if case .multi(_, let c) = state.answers[qi], c != nil { return true }
+                return false
+            }()
+            if alreadyTicked {
+                state.toggleCustom(question: qi, on: false)
+                otherActive = false
+                h.otherRow.deactivate()
+                applySelectionFromState(h, questionIndex: qi)
+                recomputePrimaryEnabled()
+                return
+            }
+            otherActive = true
+            h.otherRow.activate()
+            h.otherRow.moveCaretToEnd()
+            if !state.pendingCustom[qi]
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                state.toggleCustom(question: qi, on: true)
+            }
+            applySelectionFromState(h, questionIndex: qi)
+            recomputePrimaryEnabled()
+            return
+        }
         if otherActive { return }
         otherActive = true
         // Press animation on the Other row as it activates.
