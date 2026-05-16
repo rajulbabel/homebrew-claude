@@ -3639,7 +3639,8 @@ func buildWizardQuestionPanel(
     var optionRowViews: [NSView] = []
     for (i, opt) in question.options.enumerated() {
         let row = buildWizardOptionRow(label: opt.label, description: opt.description,
-                                       selected: false, index: i + 1, style: .radio)
+                                       selected: false, index: i + 1,
+                                       style: question.multiSelect ? .checkbox : .radio)
         optionRowViews.append(row)
         body.addSubview(row)
     }
@@ -3669,8 +3670,13 @@ func buildWizardQuestionPanel(
     // All rows start at `wizardRowHeightMin`. The Other row grows itself at
     // runtime when the user activates it and types; the controller shifts
     // siblings + resizes the panel in response to `onRowHeightChange`.
-    let totalRowsHeight = CGFloat(question.options.count + 1) * Layout.wizardRowHeightMin
-        + CGFloat(question.options.count) * Layout.wizardRowGap
+    var rowsTotal: CGFloat = 0
+    for row in optionRowViews {
+        rowsTotal += row.frame.height
+    }
+    rowsTotal += Layout.wizardRowHeightMin   // Other row, always min in rest state
+    rowsTotal += CGFloat(question.options.count) * Layout.wizardRowGap
+    let totalRowsHeight = rowsTotal
     let progressAreaHeight: CGFloat = Layout.wizardProgressTopPadding +
         Layout.wizardProgressDotHeight
     let bodyHeight = rowTopY + totalRowsHeight + progressAreaHeight + Layout.wizardBodyBottomPadding
@@ -3680,12 +3686,15 @@ func buildWizardQuestionPanel(
     pill.frame.origin.y = bodyHeight - pillTopY - Layout.wizardPillHeight
     qField.frame.origin.y = bodyHeight - qTopY - qHeight
 
-    var yCursor = bodyHeight - rowTopY - Layout.wizardRowHeightMin
+    var yCursor = bodyHeight - rowTopY
     for row in optionRowViews {
+        let rh = row.frame.height
+        yCursor -= rh
         row.frame = NSRect(x: Layout.wizardBodyPaddingH, y: yCursor,
-            width: width - Layout.wizardBodyPaddingH * 2, height: Layout.wizardRowHeightMin)
-        yCursor -= (Layout.wizardRowHeightMin + Layout.wizardRowGap)
+            width: width - Layout.wizardBodyPaddingH * 2, height: rh)
+        yCursor -= Layout.wizardRowGap
     }
+    yCursor -= Layout.wizardRowHeightMin
     otherRow.frame = NSRect(x: Layout.wizardBodyPaddingH, y: yCursor,
         width: width - Layout.wizardBodyPaddingH * 2, height: Layout.wizardRowHeightMin)
 
