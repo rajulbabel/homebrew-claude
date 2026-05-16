@@ -3231,11 +3231,12 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     private var descField: NSTextField!
     private var radioView: NSView!
     private var idxField: NSTextField!
+    private let style: WizardIndicatorStyle
 
     /// Current string contents of the text view.
     var currentText: String { textView.string }
 
-    init() {
+    init(style: WizardIndicatorStyle = .radio) {
         let container = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
         container.widthTracksTextView = true
         let storage = NSTextStorage()
@@ -3243,6 +3244,7 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
         storage.addLayoutManager(manager)
         manager.addTextContainer(container)
 
+        self.style = style
         self.textView = NSTextView(frame: .zero, textContainer: container)
         self.scrollView = NSScrollView(frame: .zero)
         super.init(frame: NSRect(x: 0, y: 0,
@@ -3304,15 +3306,13 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     // MARK: Subview construction
 
     private func buildRest() {
-        // Radio
-        radioView = NSView(frame: NSRect(
-            x: Layout.wizardRowPaddingH,
-            y: (Layout.wizardRowHeightMin - Layout.wizardRadioSize) / 2,
-            width: Layout.wizardRadioSize,
-            height: Layout.wizardRadioSize))
-        radioView.wantsLayer = true
-        radioView.layer?.cornerRadius = Layout.wizardRadioSize / 2
-        radioView.layer?.borderWidth = Layout.wizardRadioBorderWidth
+        // Indicator (radio or checkbox depending on style).
+        radioView = drawWizardIndicator(
+            frame: NSRect(
+                x: Layout.wizardRowPaddingH,
+                y: (Layout.wizardRowHeightMin - Layout.wizardRadioSize) / 2,
+                width: Layout.wizardRadioSize, height: Layout.wizardRadioSize),
+            selected: false, style: style)
         addSubview(radioView)
 
         let textX = Layout.wizardRowPaddingH + Layout.wizardRadioSize + Layout.wizardRadioGap
@@ -3427,25 +3427,16 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
     }
 
     private func refreshColors() {
-        layer?.backgroundColor = (selected ? Theme.wizardRowSelectedBg : Theme.wizardRowBg).cgColor
-        layer?.borderColor = (selected ? Theme.wizardRowSelectedBorder : Theme.wizardRowBorder).cgColor
-        if selected {
-            radioView.layer?.borderColor = Theme.buttonAllow.cgColor
-            radioView.layer?.backgroundColor = Theme.buttonAllow.cgColor
-            radioView.subviews.forEach { $0.removeFromSuperview() }
-            let ring = NSView(frame: NSRect(
-                x: Layout.wizardRadioInnerRing, y: Layout.wizardRadioInnerRing,
-                width: Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2,
-                height: Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2))
-            ring.wantsLayer = true
-            ring.layer?.backgroundColor = Theme.wizardRadioInnerGap.cgColor
-            ring.layer?.cornerRadius = ring.frame.width / 2
-            radioView.addSubview(ring)
-        } else {
-            radioView.layer?.borderColor = Theme.textSecondary.withAlphaComponent(0.55).cgColor
-            radioView.layer?.backgroundColor = NSColor.clear.cgColor
-            radioView.subviews.forEach { $0.removeFromSuperview() }
-        }
+        layer?.backgroundColor =
+            (selected ? Theme.wizardRowSelectedBg : Theme.wizardRowBg).cgColor
+        layer?.borderColor =
+            (selected ? Theme.wizardRowSelectedBorder : Theme.wizardRowBorder).cgColor
+        // Replace the indicator view rather than mutating sublayers so the
+        // checkbox check-glyph layer is rebuilt cleanly on each toggle.
+        let oldFrame = radioView.frame
+        radioView.removeFromSuperview()
+        radioView = drawWizardIndicator(frame: oldFrame, selected: selected, style: style)
+        addSubview(radioView)
         refreshIndex()
     }
 
@@ -3646,7 +3637,8 @@ func buildWizardQuestionPanel(
     }
 
     // Other row (last)
-    let otherRow = WizardOtherRow()
+    let otherRow = WizardOtherRow(
+        style: question.multiSelect ? .checkbox : .radio)
     otherRow.indexNumber = question.options.count + 1
     body.addSubview(otherRow)
 
@@ -3667,9 +3659,11 @@ func buildWizardQuestionPanel(
     let pillTopY = Layout.wizardBodyPaddingV
     let qTopY = pillTopY + Layout.wizardPillHeight + Layout.wizardBodyGapAfterPill
     let rowTopY = qTopY + qHeight + Layout.wizardBodyGapAfterQuestion
-    // All rows start at `wizardRowHeightMin`. The Other row grows itself at
-    // runtime when the user activates it and types; the controller shifts
-    // siblings + resizes the panel in response to `onRowHeightChange`.
+    // Option rows take their measured height (from `buildWizardOptionRow`'s
+    // wrap pass). The Other row stays at `wizardRowHeightMin` in rest state
+    // and grows at runtime when the user activates it and types; the
+    // controller shifts siblings + resizes the panel in response to
+    // `onRowHeightChange`.
     var rowsTotal: CGFloat = 0
     for row in optionRowViews {
         rowsTotal += row.frame.height
