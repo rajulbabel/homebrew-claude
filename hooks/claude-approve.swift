@@ -391,6 +391,10 @@ enum Layout {
     static let wizardRowPaddingV: CGFloat = 10
     static let wizardRowCornerRadius: CGFloat = 8
     static let wizardRowFocusBorderWidth: CGFloat = 2
+    /// View tag used to find the indicator subview inside an option row.
+    /// `applySelectionFromState` looks it up by this tag to redraw the
+    /// indicator with the current selected state.
+    static let wizardIndicatorViewTag: Int = 7771
     static let wizardRadioSize: CGFloat = 14
     static let wizardRadioInnerRing: CGFloat = 2.5
     static let wizardRadioBorderWidth: CGFloat = 2
@@ -3056,6 +3060,18 @@ func formatWizardAnswers(state: WizardState) -> String {
     return lines.joined(separator: "\n")
 }
 
+/// `NSView` whose `tag` is writable. `NSView.tag` is get-only by default, but
+/// the wizard option row needs to tag its indicator subview so
+/// `applySelectionFromState` can find and redraw it. Used only by
+/// `drawWizardIndicator` and `refreshOptionRowIndicator`.
+final class WizardTaggedView: NSView {
+    private var storedTag: Int = 0
+    override var tag: Int { storedTag }
+    /// Sets the tag value returned by `tag`. Mirrors `NSView`'s read-only
+    /// `tag` so callers can store an identifier on a plain view.
+    func setTag(_ value: Int) { storedTag = value }
+}
+
 /// Renders the left-edge indicator (radio circle or checkbox square) into the
 /// given square frame. Frame width/height must equal `Layout.wizardRadioSize`
 /// so radio and checkbox occupy the same footprint.
@@ -3066,7 +3082,7 @@ func formatWizardAnswers(state: WizardState) -> String {
 ///   - style: `.radio` for single-select, `.checkbox` for multi-select.
 /// - Returns: an `NSView` ready to be added to the row container.
 func drawWizardIndicator(frame: NSRect, selected: Bool, style: WizardIndicatorStyle) -> NSView {
-    let v = NSView(frame: frame)
+    let v = WizardTaggedView(frame: frame)
     v.wantsLayer = true
     v.layer?.borderWidth = Layout.wizardRadioBorderWidth
     switch style {
@@ -3114,6 +3130,24 @@ func drawWizardIndicator(frame: NSRect, selected: Bool, style: WizardIndicatorSt
         }
     }
     return v
+}
+
+/// Removes and redraws the indicator subview inside a previously-built
+/// option row, so its visual selected state matches the current answer.
+/// Looks up the indicator by its `Layout.wizardIndicatorViewTag` tag.
+///
+/// - Parameters:
+///   - row: the option row container returned by `buildWizardOptionRow`.
+///   - selected: target selected state.
+///   - style: indicator style (radio for single-select, checkbox for multi).
+func refreshOptionRowIndicator(_ row: NSView, selected: Bool, style: WizardIndicatorStyle) {
+    guard let old = row.subviews.first(where: { $0.tag == Layout.wizardIndicatorViewTag })
+    else { return }
+    let frame = old.frame
+    old.removeFromSuperview()
+    let fresh = drawWizardIndicator(frame: frame, selected: selected, style: style)
+    (fresh as? WizardTaggedView)?.setTag(Layout.wizardIndicatorViewTag)
+    row.addSubview(fresh)
 }
 
 /// Builds a single radio-card row view used in the question panel.
@@ -3175,7 +3209,9 @@ func buildWizardOptionRow(label: String, description: String, selected: Bool,
         x: Layout.wizardRowPaddingH,
         y: (rowHeight - Layout.wizardRadioSize) / 2,
         width: Layout.wizardRadioSize, height: Layout.wizardRadioSize)
-    container.addSubview(drawWizardIndicator(frame: indFrame, selected: selected, style: style))
+    let indicator = drawWizardIndicator(frame: indFrame, selected: selected, style: style)
+    (indicator as? WizardTaggedView)?.setTag(Layout.wizardIndicatorViewTag)
+    container.addSubview(indicator)
 
     let labelField = NSTextField(labelWithString: label)
     labelField.font = Theme.wizardLabelFont
@@ -4281,26 +4317,38 @@ final class WizardController: NSObject {
 
     private func applySelectionFromState(_ h: WizardQuestionPanelHandles, questionIndex: Int) {
         guard questionIndex >= 0, questionIndex < state.questions.count else { return }
+        let q = state.questions[questionIndex]
         let answer = state.answers[questionIndex]
+        let style: WizardIndicatorStyle = q.multiSelect ? .checkbox : .radio
+
+        // Reset every preset row's chrome to the unselected baseline; the
+        // selected paint below re-applies on the matching row(s).
         for row in h.optionRowViews {
             row.layer?.backgroundColor = Theme.wizardRowBg.cgColor
             row.layer?.borderColor = Theme.wizardRowBorder.cgColor
             row.layer?.borderWidth = 1
         }
 
-        if state.questions[questionIndex].multiSelect {
+        if q.multiSelect {
             // Multi: paint every ticked preset; Other row ticked iff custom != nil.
+            var presetSelected: Set<Int> = []
+            var otherTicked = false
             if case .multi(let presets, let custom) = answer {
-                for idx in presets where idx < h.optionRowViews.count {
-                    let row = h.optionRowViews[idx]
+                presetSelected = presets
+                otherTicked = (custom != nil)
+            }
+            for (idx, row) in h.optionRowViews.enumerated() {
+                let on = presetSelected.contains(idx)
+                refreshOptionRowIndicator(row, selected: on, style: style)
+                if on {
                     row.layer?.backgroundColor = Theme.wizardRowSelectedBg.cgColor
                     row.layer?.borderColor = Theme.wizardRowSelectedBorder.cgColor
                 }
-                h.otherRow.setSelected(custom != nil || otherActive)
-            } else {
-                h.otherRow.setSelected(otherActive)
             }
+            h.otherRow.setSelected(otherTicked || otherActive)
+            h.otherRow.layer?.borderWidth = 1
             h.otherRow.setText(state.pendingCustom[questionIndex])
+
             // Overlay keyboard focus outline on the focused row.
             if focusedRow >= 0, focusedRow < h.optionRowViews.count {
                 let row = h.optionRowViews[focusedRow]
@@ -4313,15 +4361,22 @@ final class WizardController: NSObject {
             return
         }
 
-        // Single: existing behaviour, unchanged.
-        h.otherRow.layer?.borderWidth = 1
+        // Single: existing behaviour, now also refreshes each row's indicator.
         let isCustom: Bool = { if case .custom = answer { return true } else { return false } }()
-        h.otherRow.setSelected(otherActive || isCustom)
-        if !otherActive, case .preset(let idx) = answer, idx < h.optionRowViews.count {
-            let row = h.optionRowViews[idx]
-            row.layer?.backgroundColor = Theme.wizardRowSelectedBg.cgColor
-            row.layer?.borderColor = Theme.wizardRowSelectedBorder.cgColor
+        let presetIndex: Int? = {
+            if !otherActive, case .preset(let idx) = answer { return idx }
+            return nil
+        }()
+        for (idx, row) in h.optionRowViews.enumerated() {
+            let on = (idx == presetIndex)
+            refreshOptionRowIndicator(row, selected: on, style: style)
+            if on {
+                row.layer?.backgroundColor = Theme.wizardRowSelectedBg.cgColor
+                row.layer?.borderColor = Theme.wizardRowSelectedBorder.cgColor
+            }
         }
+        h.otherRow.setSelected(otherActive || isCustom)
+        h.otherRow.layer?.borderWidth = 1
         h.otherRow.setText(state.pendingCustom[questionIndex])
     }
 
