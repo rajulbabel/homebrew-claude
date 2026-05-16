@@ -2986,9 +2986,17 @@ func buildWizardAnswersDict(state: WizardState) -> [String: String] {
             }
         case .custom(let text):
             dict[q.question] = text
-        case .multi:
-            // Real handling lands in Task 10. Skip for now so the build stays green.
-            continue
+        case .multi(let presets, let custom):
+            var parts: [String] = []
+            for idx in presets.sorted() where idx < q.options.count {
+                parts.append(q.options[idx].label)
+            }
+            if let c = custom, !c.isEmpty {
+                parts.append(c)
+            }
+            if !parts.isEmpty {
+                dict[q.question] = parts.joined(separator: ", ")
+            }
         case .none:
             continue
         }
@@ -3016,10 +3024,23 @@ func formatWizardAnswers(state: WizardState) -> String {
             for cont in parts.dropFirst() {
                 lines.append("     \(cont)")
             }
-        case .multi:
-            // Real handling lands in Task 10. Print a placeholder so the line
-            // count stays sane in the meantime.
-            lines.append("   → (multi-select pending)")
+        case .multi(let presets, let custom):
+            if presets.isEmpty && (custom?.isEmpty ?? true) {
+                lines.append("   → (no selection)")
+                break
+            }
+            for idx in presets.sorted() where idx < q.options.count {
+                let opt = q.options[idx]
+                let suffix = opt.description.isEmpty ? "" : " — \(opt.description)"
+                lines.append("   → \(opt.label)\(suffix)")
+            }
+            if let c = custom, !c.isEmpty {
+                let parts = c.components(separatedBy: "\n")
+                lines.append("   → (custom) \(parts[0])")
+                for cont in parts.dropFirst() {
+                    lines.append("     \(cont)")
+                }
+            }
         case .none:
             lines.append("   → (no answer)")
         }
@@ -3982,10 +4003,17 @@ func buildWizardReviewPanel(state: WizardState) -> WizardReviewPanelHandles {
         case .custom(let text):
             let firstLine = text.components(separatedBy: "\n").first ?? text
             answerText = "✓ \(firstLine) · custom"
-        case .multi:
-            // Real handling lands in Task 10. Show a neutral placeholder so the
-            // review row still renders while the multi-select UI is wired up.
-            answerText = "✓ (multi-select)"
+        case .multi(let presets, let custom):
+            var parts: [String] = []
+            for idx in presets.sorted() where idx < q.options.count {
+                parts.append(q.options[idx].label)
+            }
+            if let c = custom, !c.isEmpty {
+                parts.append("✎ \(c.components(separatedBy: "\n").first ?? c)")
+            }
+            answerText = parts.isEmpty
+                ? "(none)"
+                : "✓ \(parts.joined(separator: ", "))"
         case .none:
             answerText = "⋯ (not answered yet)"
         }

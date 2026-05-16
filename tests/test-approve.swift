@@ -1765,6 +1765,56 @@ func testFormatWizardAnswers() {
         assertContains(out, "2. [TEST]")
         assertContains(out, "→ (no answer)")
     }
+    test("buildWizardAnswersDict: multi with presets only") {
+        let q = WizardQuestion(
+            header: "X", question: "Pick",
+            options: [WizardOption(label: "A", description: ""),
+                      WizardOption(label: "B", description: ""),
+                      WizardOption(label: "C", description: "")],
+            multiSelect: true)
+        let s = WizardState(questions: [q])
+        s.togglePreset(question: 0, optionIndex: 0)
+        s.togglePreset(question: 0, optionIndex: 2)
+        let d = buildWizardAnswersDict(state: s)
+        assertEq(d["Pick"], "A, C")
+    }
+    test("buildWizardAnswersDict: multi with custom only") {
+        let q = WizardQuestion(
+            header: "X", question: "Pick",
+            options: [WizardOption(label: "A", description: "")],
+            multiSelect: true)
+        let s = WizardState(questions: [q])
+        s.setMultiCustomText(question: 0, text: "freeform")
+        let d = buildWizardAnswersDict(state: s)
+        assertEq(d["Pick"], "freeform")
+    }
+    test("buildWizardAnswersDict: multi presets + custom") {
+        let q = WizardQuestion(
+            header: "X", question: "Pick",
+            options: [WizardOption(label: "A", description: ""),
+                      WizardOption(label: "B", description: "")],
+            multiSelect: true)
+        let s = WizardState(questions: [q])
+        s.togglePreset(question: 0, optionIndex: 1)
+        s.setMultiCustomText(question: 0, text: "freeform")
+        let d = buildWizardAnswersDict(state: s)
+        assertEq(d["Pick"], "B, freeform")
+    }
+    test("formatWizardAnswers: multi prints one arrow line per selection") {
+        let q = WizardQuestion(
+            header: "X", question: "Pick",
+            options: [WizardOption(label: "A", description: "alpha"),
+                      WizardOption(label: "B", description: "beta")],
+            multiSelect: true)
+        let s = WizardState(questions: [q])
+        s.togglePreset(question: 0, optionIndex: 0)
+        s.togglePreset(question: 0, optionIndex: 1)
+        s.setMultiCustomText(question: 0, text: "freeform")
+        let out = formatWizardAnswers(state: s)
+        assertContains(out, "→ A — alpha")
+        assertContains(out, "→ B — beta")
+        assertContains(out, "→ (custom) freeform")
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
