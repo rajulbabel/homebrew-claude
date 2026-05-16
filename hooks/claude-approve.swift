@@ -4014,7 +4014,7 @@ func buildWizardReviewPanel(state: WizardState) -> WizardReviewPanelHandles {
                 parts.append(q.options[idx].label)
             }
             if let c = custom, !c.isEmpty {
-                parts.append("✎ \(c.components(separatedBy: "\n").first ?? c)")
+                parts.append("(custom) \(c.components(separatedBy: "\n").first ?? c)")
             }
             answerText = parts.isEmpty
                 ? "(none)"
