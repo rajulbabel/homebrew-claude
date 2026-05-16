@@ -4165,6 +4165,10 @@ final class WizardController: NSObject {
     /// True while the user is editing the current question's Other text field.
     /// Drives panel layout (expanded row height) and keyboard-routing.
     private var otherActive: Bool = false
+    /// Focused-row index for multi-select keyboard nav. `0..options.count-1`
+    /// targets a preset row; `options.count` targets the Other row. Single-
+    /// select pages ignore this field. Reset on every step change.
+    private var focusedRow: Int = 0
 
     init(state: WizardState, panel: NSPanel, contentContainer: NSView,
          projectName: String, cwd: String) {
@@ -4206,6 +4210,7 @@ final class WizardController: NSObject {
         container.addSubview(h.root)
         resizePanelToFit(rootHeight: h.root.frame.height)
         currentQuestionHandles = h
+        focusedRow = 0
         wireQuestionHandles(h, questionIndex: qIndex)
         applySelectionFromState(h, questionIndex: qIndex)
         applyProgress(dots: h.progressDots)
@@ -4587,6 +4592,52 @@ final class WizardController: NSObject {
         // EXCEPT Esc (handled by the text view delegate) and Return (handled there too).
         if otherActive {
             return false
+        }
+
+        let qi = state.step
+        if qi >= 0, qi < state.questions.count,
+           state.questions[qi].multiSelect {
+            let q = state.questions[qi]
+            let nPresets = q.options.count
+            if let ch = event.charactersIgnoringModifiers,
+               ch.count == 1, let scalar = ch.unicodeScalars.first,
+               let digit = Int(String(scalar)) {
+                if digit >= 1, digit <= nPresets {
+                    focusedRow = digit - 1
+                    state.togglePreset(question: qi, optionIndex: digit - 1)
+                    if let h = self.currentQuestionHandles {
+                        self.applySelectionFromState(h, questionIndex: qi)
+                        self.recomputePrimaryEnabled()
+                    }
+                    return true
+                }
+                if digit == nPresets + 1 {
+                    focusedRow = nPresets
+                    activateOther(questionIndex: qi)
+                    return true
+                }
+            }
+            switch event.keyCode {
+            case 49:  // Space
+                if focusedRow < nPresets {
+                    state.togglePreset(question: qi, optionIndex: focusedRow)
+                } else {
+                    activateOther(questionIndex: qi)
+                }
+                if let h = self.currentQuestionHandles {
+                    self.applySelectionFromState(h, questionIndex: qi)
+                    self.recomputePrimaryEnabled()
+                }
+                return true
+            case 126:  // up arrow
+                focusedRow = (focusedRow - 1 + nPresets + 1) % (nPresets + 1)
+                return true
+            case 125:  // down arrow
+                focusedRow = (focusedRow + 1) % (nPresets + 1)
+                return true
+            default:
+                break  // Fall through to shared Return / Esc / arrows handling
+            }
         }
 
         switch event.keyCode {
