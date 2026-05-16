@@ -4217,9 +4217,7 @@ final class WizardController: NSObject {
         // Back disabled on step 0
         h.backButton.isEnabled = (qIndex > 0)
         // Primary disabled until current question has an answer
-        applyWizardSubmitEnabled(h.primaryButton,
-            enabled: state.answers[qIndex] != nil,
-            isSubmit: isLast)
+        recomputePrimaryEnabled()
 
         if otherActive {
             h.otherRow.activate()
@@ -4559,10 +4557,30 @@ final class WizardController: NSObject {
     private func recomputePrimaryEnabled() {
         guard let h = currentQuestionHandles else { return }
         let qi = state.step
+        guard qi >= 0, qi < state.questions.count else { return }
+        let q = state.questions[qi]
         let isLast = (qi == state.questions.count - 1)
-        applyWizardSubmitEnabled(h.primaryButton,
-            enabled: state.answers[qi] != nil,
-            isSubmit: isLast)
+        let answered: Bool = {
+            switch state.answers[qi] {
+            case .none: return false
+            case .some(.preset), .some(.custom): return true
+            case .some(.multi(let p, let c)):
+                return p.count + (c == nil ? 0 : 1) >= 1
+            }
+        }()
+        if q.multiSelect {
+            let count: Int = {
+                if case .multi(let p, let c) = state.answers[qi] {
+                    return p.count + (c == nil ? 0 : 1)
+                }
+                return 0
+            }()
+            let base = isLast ? WizardLabels.submit : WizardLabels.next
+            h.primaryButton.title = base + String(format: WizardLabels.submitMultiTail, count)
+        } else {
+            h.primaryButton.title = isLast ? WizardLabels.submit : WizardLabels.next
+        }
+        applyWizardSubmitEnabled(h.primaryButton, enabled: answered, isSubmit: isLast)
     }
 
     private func stopModal() {
@@ -4677,8 +4695,8 @@ final class WizardController: NSObject {
         case .preset(let i): current = i
         case .custom:         current = total - 1
         case .multi:
-            // Real handling lands in Task 8 (keyboard navigation for multi-
-            // select). Treat as no anchor for now so the build stays green.
+            // Multi-select pages have their own keyboard branch in handleKey;
+            // this arm is unreachable in practice. Treated like .none for safety.
             current = otherActive ? (total - 1) : -1
         case .none:           current = otherActive ? (total - 1) : -1
         }
