@@ -1564,6 +1564,19 @@ func testBuildWizardOptionRow() {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// MARK: - WizardLabels Tests (2)
+// ═══════════════════════════════════════════════════════════════════
+
+func testWizardLabels() {
+    test("WizardLabels.submit uses capital A") {
+        assertEq(WizardLabels.submit, "Submit Answers")
+    }
+    test("WizardLabels.submitMultiTail formats count") {
+        assertEq(String(format: WizardLabels.submitMultiTail, 3), " · 3 Selected")
+    }
+}
+
 func testFormatWizardAnswers() {
     let q1 = WizardQuestion(
         header: "DB", question: "Which database?",
@@ -1640,7 +1653,7 @@ func testLabelEnums() {
     test("WizardLabels: exact strings") {
         assertEq(WizardLabels.back,     "Back")
         assertEq(WizardLabels.next,     "Next")
-        assertEq(WizardLabels.submit,   "Submit answers")
+        assertEq(WizardLabels.submit,   "Submit Answers")
         assertEq(WizardLabels.terminal, "Go to Terminal")
         assertEq(WizardLabels.terminalForClaudeDesktop, "Go to Claude Desktop")
         assertEq(WizardLabels.ok,       "Ok")
@@ -1665,6 +1678,7 @@ enum ApproveTests {
         testParseWizardQuestions()
         testWizardState()
         testBuildWizardOptionRow()
+        testWizardLabels()
         testFormatWizardAnswers()
         testBuildGist()
         testLastComponent()

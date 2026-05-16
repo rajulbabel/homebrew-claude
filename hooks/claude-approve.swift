@@ -471,7 +471,10 @@ enum Layout {
 enum WizardLabels {
     static let back                    = "Back"
     static let next                    = "Next"
-    static let submit                  = "Submit answers"
+    static let submit                  = "Submit Answers"
+    /// Suffix appended to the primary button on multi-select pages.
+    /// `String(format: WizardLabels.submitMultiTail, count)` → ` · 3 Selected`.
+    static let submitMultiTail         = " · %d Selected"
     static let terminal                = "Go to Terminal"
     static let terminalForClaudeDesktop = "Go to Claude Desktop"
     static let ok                      = "Ok"
@@ -3614,7 +3617,7 @@ func buildWizardQuestionPanel(
     footer.wantsLayer = true
     footer.layer?.backgroundColor = Theme.codeBackground.cgColor
 
-    // Row 1: Back + Primary (Next / Submit answers)
+    // Row 1: Back + Primary (Next / Submit Answers)
     let back = makeWizardFooterButton(
         title: WizardLabels.back,
         fill:  Theme.wizardNeutralFillRest,
