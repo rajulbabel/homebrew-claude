@@ -133,9 +133,9 @@ Reset session approvals first: `rm -rf /tmp/claude-hook-sessions/`
 12. **AskUserQuestion wizard** — trigger `AskUserQuestion` with one or more questions.
     Wizard panel appears with the lavender `ASKUSERQUESTION` header tag. Work through
     every sub-case:
-    - **12a.** Single question → primary button says `Submit answers`, Return submits.
+    - **12a.** Single question → primary button says `Submit Answers`, Return submits.
     - **12b.** Three questions → per-question panels, last question's primary button
-      says `Submit answers` and submits the whole bundle.
+      says `Submit Answers` and submits the whole bundle.
     - **12c.** "Other" row → click it to morph into a multi-line text area. Type,
       use Shift+Return for newlines, row grows to fit. Single-line text sits
       vertically centred inside the row.
@@ -146,9 +146,24 @@ Reset session approvals first: `rm -rf /tmp/claude-hook-sessions/`
       ←/→ Back/Next, Return Next/Submit.
     - **12g.** Keyboard in Other text mode: digits type into the text, ←/→ caret,
       ↑/↓ line navigation, Esc exits back to option mode.
-    - **12h.** Footer is two rows: row 1 `Back` + `Next` / `Submit answers`,
+    - **12h.** Footer is two rows: row 1 `Back` + `Next` / `Submit Answers`,
       row 2 `Go to Terminal` + `Ok`. Ok dismisses the dialog (deny with
       "user cancelled" reason). Go to Terminal still opens the user's terminal.
+    - **12i.** Long description — render an AskUserQuestion whose option
+      description is 6+ sentences. The row grows vertically to fit the
+      wrapped description; nothing is truncated with `…`; siblings and
+      footer reflow correctly; the panel auto-resizes.
+    - **12j.** Multi-select question — render an AskUserQuestion with
+      `multiSelect: true`. Indicator is a checkbox (not radio). Pressing
+      `1`..`N` toggles the matching preset on/off; `N+1` toggles the
+      Other row (and activates its text view); Space toggles the
+      focused row. The primary button reads `Submit Answers · K Selected`
+      with K updating live, and is disabled at K = 0.
+    - **12k.** Mixed wizard — three questions, the middle one
+      `multiSelect: true`. Indicator and Submit suffix update per page.
+      Navigating Back from the multi page preserves the ticked set;
+      returning forward shows it intact. The third page (single-select)
+      uses the existing radio chrome with no behavioural drift.
 13. **Unified dialog family** — trigger in sequence: a Bash permission, finish an
     Edit permission, let Claude finish to get the Done dialog, then a multi-
     question AskUserQuestion. All four panels share: borderless rounded chrome
