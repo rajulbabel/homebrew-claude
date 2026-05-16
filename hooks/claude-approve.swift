@@ -4745,8 +4745,10 @@ final class WizardController: NSObject {
         case .preset(let i): current = i
         case .custom:         current = total - 1
         case .multi:
-            // Multi-select pages have their own keyboard branch in handleKey;
-            // this arm is unreachable in practice. Treated like .none for safety.
+            // Multi-select pages consume ↑/↓ in handleKey before reaching
+            // moveSelection, so this arm is unreachable. Treat like .none
+            // for defensive safety; assert in debug builds.
+            assertionFailure("moveSelection should not be called on a .multi answer")
             current = otherActive ? (total - 1) : -1
         case .none:           current = otherActive ? (total - 1) : -1
         }
