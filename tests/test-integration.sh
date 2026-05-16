@@ -216,6 +216,19 @@ OUTPUT14=$(echo '{"tool_name":"Write","tool_input":{"file_path":"/project/.claud
     | "$APPROVE" 2>/dev/null)
 assert_contains "settings Write allow" "$OUTPUT14" '"permissionDecision":"allow"'
 
+# ── 20. AskUserQuestion mixed-wizard fixture is readable ───────
+# Full end-to-end execution of the wizard requires a GUI; assert the
+# fixture is well-formed JSON the parser can consume. The richer smoke
+# is deferred until an autotest hook env is added.
+echo "  Running: AskUserQuestion mixed-wizard fixture sanity..."
+FIXTURE="$SCRIPT_DIR/fixtures/askuserquestion-mixed.json"
+if [ -r "$FIXTURE" ] && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$FIXTURE" 2>/dev/null; then
+    PASSED=$((PASSED + 1))
+else
+    FAILED=$((FAILED + 1))
+    echo "  FAIL: askuserquestion-mixed.json is not valid JSON"
+fi
+
 # ── Summary ─────────────────────────────────────────────────────
 echo ""
 TOTAL=$((PASSED + FAILED))

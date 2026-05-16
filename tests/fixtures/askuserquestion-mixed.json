@@ -1,0 +1,36 @@
+{
+  "tool_name": "AskUserQuestion",
+  "tool_input": {
+    "questions": [
+      {
+        "header": "DB",
+        "question": "Which database?",
+        "options": [
+          {"label": "Postgres", "description": "Client-server SQL"},
+          {"label": "SQLite", "description": "Embedded"}
+        ]
+      },
+      {
+        "header": "EXCLUDE",
+        "question": "Confirm exclude list",
+        "multiSelect": true,
+        "options": [
+          {"label": "BLEU", "description": "Metric"},
+          {"label": "ROUGE", "description": "Metric"},
+          {"label": "METEOR", "description": "Metric"}
+        ]
+      },
+      {
+        "header": "SCOPE",
+        "question": "Commit at end?",
+        "options": [
+          {"label": "Yes", "description": ""},
+          {"label": "No", "description": ""}
+        ]
+      }
+    ]
+  },
+  "cwd": "/tmp/integration",
+  "session_id": "integration-mixed",
+  "permission_mode": "default"
+}
