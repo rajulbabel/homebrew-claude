@@ -376,6 +376,14 @@ enum Layout {
     static let morphSendHeight: CGFloat = 24
     static let morphSendCornerRadius: CGFloat = 6
     static let morphSendMargin: CGFloat = 5
+    /// Maximum height the morph row can grow to as the user types multiple
+    /// lines. Beyond this the text view scrolls internally instead of pushing
+    /// the dialog taller.
+    static let morphRowMaxHeight: CGFloat = 160
+    /// Width of the blinking insertion-point caret inside the morphed text
+    /// view. macOS's 1pt default reads as a faint hairline; 2pt gives a
+    /// clearly visible focus indicator.
+    static let morphCaretWidth: CGFloat = 2
 
     // Wizard — panel regions
     static let wizardHeaderHeight: CGFloat = 26
@@ -2222,6 +2230,25 @@ func animateButtonPress(_ button: NSView, restFillColor: NSColor? = nil) {
     }
 }
 
+// MARK: - Morph Text View
+
+/// NSTextView subclass that draws a wider insertion-point caret so the
+/// blinking cursor is clearly visible inside the morphed deny text input.
+/// The default macOS caret is 1pt wide and reads as a faint hairline against
+/// the input's tinted background; widening it makes the focus state obvious.
+final class MorphTextView: NSTextView {
+    override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        guard flag else {
+            super.drawInsertionPoint(in: rect, color: color, turnedOn: flag)
+            return
+        }
+        let widened = NSRect(x: rect.origin.x, y: rect.origin.y,
+                             width: Layout.morphCaretWidth, height: rect.height)
+        color.set()
+        widened.fill()
+    }
+}
+
 // MARK: - Button Handler
 
 /// Manages button press state, text input morphing, and dialog dismissal.
@@ -2241,6 +2268,12 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate, NSTextViewDelegate {
     // Held onto so submitTextInput can read the typed string. Swapped from
     // NSTextField to NSTextView + NSScrollView to support Shift+Return newlines.
     private var activeTextView: NSTextView?
+    // Morph layout refs — captured in `morphToTextField`, consulted by
+    // `refreshMorphLayout` to grow the row, shift siblings, and resize the
+    // panel as the typed text spans multiple lines.
+    private weak var morphContainer: NSView?
+    private weak var morphSendBtn: NSButton?
+    private var morphInitialHeight: CGFloat = 0
 
     init(options: [PermOption]) {
         self.options = options
@@ -2321,12 +2354,13 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate, NSTextViewDelegate {
         let textContainer = NSTextContainer(size: NSSize(
             width: 0, height: CGFloat.greatestFiniteMagnitude))
         textContainer.widthTracksTextView = true
+        textContainer.lineFragmentPadding = 0
         let storage = NSTextStorage()
         let manager = NSLayoutManager()
         storage.addLayoutManager(manager)
         manager.addTextContainer(textContainer)
 
-        let textView = NSTextView(frame: .zero, textContainer: textContainer)
+        let textView = MorphTextView(frame: .zero, textContainer: textContainer)
         textView.isEditable = true
         textView.isSelectable = true
         textView.drawsBackground = false
@@ -2355,28 +2389,86 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate, NSTextViewDelegate {
         scrollView.borderType = .noBorder
         scrollView.documentView = textView
 
-        // Placeholder label — hidden once typing starts.
+        // Placeholder label — hidden once typing starts. Shifted right of the
+        // caret so the blinking insertion point doesn't sit on top of the
+        // first glyph of the hint text.
+        let placeholderGap: CGFloat = 2
         let placeholder = NSTextField(labelWithString: option.placeholder)
         placeholder.font = Theme.morphInputFont
         placeholder.textColor = Theme.morphPlaceholder
         placeholder.frame = NSRect(
-            x: leftPad, y: (frame.height - 14) / 2,
-            width: frame.width - leftPad - rightPad, height: 14)
+            x: leftPad + placeholderGap, y: (frame.height - 14) / 2,
+            width: frame.width - leftPad - rightPad - placeholderGap, height: 14)
         placeholder.identifier = NSUserInterfaceItemIdentifier("morph-placeholder")
         container.addSubview(placeholder)
         container.addSubview(scrollView)
 
         activeTextView = textView
+        morphContainer = container
+        morphSendBtn = sendBtn
+        morphInitialHeight = frame.height
 
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.2
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             button.animator().alphaValue = 0
             container.animator().alphaValue = 1
-        }, completionHandler: {
+        }, completionHandler: { [weak self] in
             button.isHidden = true
             superview.window?.makeFirstResponder(textView)
+            self?.refreshMorphLayout()
         })
+    }
+
+    /// Re-measures the morphed text view and grows the row, sibling buttons,
+    /// and panel to fit. Caps at `Layout.morphRowMaxHeight`; past that the
+    /// text view scrolls internally. Then re-centers the scroll view and
+    /// Send button vertically within the (possibly resized) row.
+    ///
+    /// Growth model: the morph row's `origin.y` stays pinned; its `height`
+    /// expands upward, eating into the y space where the Yes / Yes-don't-ask
+    /// buttons sit. Those siblings shift up by `delta`, the panel grows by
+    /// `delta` anchored at its top edge (origin.y -= delta, height += delta)
+    /// so the dialog visually grows downward on screen.
+    private func refreshMorphLayout() {
+        guard let tv = activeTextView,
+              let scroll = tv.enclosingScrollView,
+              let container = morphContainer,
+              let send = morphSendBtn,
+              let superview = container.superview,
+              let panel = superview.window else { return }
+
+        tv.layoutManager?.ensureLayout(for: tv.textContainer!)
+        let used = tv.layoutManager?.usedRect(for: tv.textContainer!) ?? .zero
+        let inset = tv.textContainerInset.height * 2
+        let textH = ceil(used.height) + inset
+        let basePad: CGFloat = 4
+
+        let desired = min(Layout.morphRowMaxHeight,
+                          max(morphInitialHeight, textH + basePad * 2))
+        let oldH = container.frame.height
+        let delta = desired - oldH
+
+        if delta != 0 {
+            let topOfMorph = container.frame.maxY
+            for sub in superview.subviews where sub !== container {
+                if sub.frame.origin.y >= topOfMorph - 0.5 {
+                    sub.frame.origin.y += delta
+                }
+            }
+            container.frame.size.height = desired
+            var pf = panel.frame
+            pf.size.height += delta
+            pf.origin.y -= delta
+            panel.setFrame(pf, display: true)
+        }
+
+        let rowH = container.frame.height
+        let visibleH = min(rowH - basePad * 2, max(textH, 14))
+        let y = (rowH - visibleH) / 2
+        scroll.frame = NSRect(x: scroll.frame.origin.x, y: y,
+                              width: scroll.frame.width, height: visibleH)
+        send.frame.origin.y = (rowH - send.frame.height) / 2
     }
 
     private func submitTextInput(index: Int) {
@@ -2433,12 +2525,13 @@ final class ButtonHandler: NSObject, NSTextFieldDelegate, NSTextViewDelegate {
     }
 
     func textDidChange(_ notification: Notification) {
-        guard let tv = activeTextView, let container = tv.enclosingScrollView?.superview else { return }
+        guard let tv = activeTextView, let container = morphContainer else { return }
         if let placeholder = container.subviews.first(where: {
             $0.identifier == NSUserInterfaceItemIdentifier("morph-placeholder")
         }) {
             placeholder.isHidden = !tv.string.isEmpty
         }
+        refreshMorphLayout()
         tv.scrollRangeToVisible(tv.selectedRange())
     }
 
