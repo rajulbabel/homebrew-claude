@@ -1505,7 +1505,7 @@ func testWizardState() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// MARK: - buildWizardOptionRow Tests (4)
+// MARK: - buildWizardOptionRow Tests (6)
 // ═══════════════════════════════════════════════════════════════════
 
 func testBuildWizardOptionRow() {
@@ -1537,6 +1537,30 @@ func testBuildWizardOptionRow() {
             label: "Y", description: "x",
             selected: false, index: 1, style: .checkbox)
         assertEq(r.frame.height, c.frame.height)
+    }
+    test("buildWizardOptionRow: label anchored at original Y in min-height row") {
+        let v = buildWizardOptionRow(
+            label: "Yes", description: "Short.",
+            selected: false, index: 1, style: .radio)
+        // First non-indicator NSTextField with the label string is the label.
+        let label = v.subviews.compactMap { $0 as? NSTextField }
+            .first(where: { $0.stringValue == "Yes" })
+        assertTrue(label != nil, "label field present")
+        assertEq(label!.frame.origin.y, Layout.wizardRowLabelY)
+    }
+    test("buildWizardOptionRow: label stays anchored to row top when row grows") {
+        let long = String(repeating: "Very long description text. ", count: 12)
+        let v = buildWizardOptionRow(
+            label: "Yes", description: long,
+            selected: false, index: 1, style: .radio)
+        let label = v.subviews.compactMap { $0 as? NSTextField }
+            .first(where: { $0.stringValue == "Yes" })
+        assertTrue(label != nil, "label field present")
+        // Label-top distance from row-top must equal the original layout's
+        // top inset (7pt = 44 - 21 - 16).
+        let labelTopFromRowTop = v.frame.height - (label!.frame.origin.y + label!.frame.height)
+        let expectedTopInset = Layout.wizardRowHeightMin - Layout.wizardRowLabelY - Layout.wizardRowLabelHeight
+        assertEq(labelTopFromRowTop, expectedTopInset)
     }
 }
 

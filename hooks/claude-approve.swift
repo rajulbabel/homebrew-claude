@@ -3062,7 +3062,7 @@ func buildWizardOptionRow(label: String, description: String, selected: Bool,
     labelField.font = Theme.wizardLabelFont
     labelField.textColor = Theme.textPrimary
     labelField.lineBreakMode = .byTruncatingTail
-    let labelY = rowHeight - (Layout.wizardRowHeightMin - Layout.wizardRowLabelY) - labelHeight
+    let labelY = rowHeight - (Layout.wizardRowHeightMin - Layout.wizardRowLabelY)
     labelField.frame = NSRect(x: textX, y: labelY, width: textWidth, height: labelHeight)
     container.addSubview(labelField)
 
