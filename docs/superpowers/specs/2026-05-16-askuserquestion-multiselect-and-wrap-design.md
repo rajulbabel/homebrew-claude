@@ -32,7 +32,7 @@ Two issues with the current `AskUserQuestion` wizard in `hooks/claude-approve.sw
 | 1 | Description wrap strategy | Full wrap, no line cap. Row grows to fit. |
 | 2 | Multi-select indicator | 14×14 rounded-square outline; selected = green fill + black ✓. |
 | 3 | Multi-page wizards | `multiSelect` is per question; mixed wizards (e.g. Q1 single, Q2 multi) are supported. Indicator + Submit-suffix update per page. |
-| 4 | Multi-select keyboard | Digits `1..N` toggle preset N (focus follows); `N+1` toggles Other (focus follows; does not activate text view); ↑/↓ moves focus only (wraps); Space toggles focused row; ↵ advances; Esc cancels. |
+| 4 | Multi-select keyboard | Digits `1..N` toggle preset N (focus follows); `N+1` toggles Other (focus follows; activates the text view so the user can immediately type, matching Claude Code CLI's flow); ↑/↓ moves focus only (wraps); Space toggles focused row; ↵ advances; Esc cancels. |
 | 5 | Other row chrome | Identical to preset row — same label/desc layout, no border or background change, only the indicator differs. Active state still swaps description for the NSTextView in the same column. |
 | 6 | Submit button label | `"Submit Answers"` (capital A) in both modes. Multi-select pages append `" · N Selected"`; single-select pages keep the bare title. |
 | 7 | Multi-select submit gate | Require ≥ 1 selection (preset or non-empty Other) before Submit/Next is enabled. |
@@ -98,7 +98,7 @@ New:
 - `onPresetClicked` branches on the current question's `multiSelect`.
 - Keyboard handler (the local key monitor installed by `installKeyMonitor`) gets a new branch for multi-select pages. Multi-select introduces a tracked "focused row" (option index, defaulting to `0` on first paint; `N` represents the Other row):
   - Digits `1..N` → toggle preset N. Focus moves to row N.
-  - Digit `N+1` → toggle Other inclusion. Focus moves to Other. Does **not** activate the text view; activation only happens when the user clicks the row or presses ↵ on it while focused. (This avoids surprising the user with a focus-stealing text caret when they meant to tick a box.)
+  - Digit `N+1` → toggles Other inclusion via `activateOther(questionIndex:)`. Focus moves to Other. When the Other was not previously ticked, this both ticks the box (after the first keystroke per the auto-tick rule) **and** opens the text view so the user can type immediately. When the Other was already ticked, the digit unticks and deactivates typing. This mirrors the click-on-Other path and matches Claude Code CLI's flow.
   - Space → toggle the focused row.
   - ↑/↓ → move focus only; never mutates selection. Focus wraps (↓ past last → row 0).
   - ↵ Return → advance/submit (gated by the ≥ 1 rule).
