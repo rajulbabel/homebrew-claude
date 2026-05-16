@@ -137,6 +137,15 @@ enum WizardAnswer: Equatable {
     case custom(text: String)
 }
 
+/// Visual style for an option row's left-edge indicator.
+///
+/// - `radio`: filled circle (single-select). Existing behaviour.
+/// - `checkbox`: rounded square with a check glyph (multi-select).
+enum WizardIndicatorStyle {
+    case radio
+    case checkbox
+}
+
 /// Represents a single operation in a unified diff.
 enum DiffOp: Equatable {
     case context(String)
@@ -374,6 +383,16 @@ enum Layout {
     static let wizardRadioInnerRing: CGFloat = 2.5
     static let wizardRadioBorderWidth: CGFloat = 2
     static let wizardRadioGap: CGFloat = 10
+    // Wizard — checkbox indicator (multi-select). Same outer footprint as the
+    // radio so the row never reflows when the style flips.
+    static let wizardCheckboxCornerRadius: CGFloat = 3
+    static let wizardCheckmarkInsetX: CGFloat = 2
+    static let wizardCheckmarkLowY: CGFloat = 4
+    static let wizardCheckmarkPeakX: CGFloat = 6
+    static let wizardCheckmarkPeakY: CGFloat = 7
+    static let wizardCheckmarkHighX: CGFloat = 11
+    static let wizardCheckmarkHighY: CGFloat = 2
+    static let wizardCheckmarkLineWidth: CGFloat = 2
     // Baselines for the label + description stack inside a row (bottom-origin Y).
     static let wizardRowLabelY: CGFloat = 21
     static let wizardRowLabelHeight: CGFloat = 16
@@ -2918,88 +2937,151 @@ func formatWizardAnswers(state: WizardState) -> String {
     return lines.joined(separator: "\n")
 }
 
+/// Renders the left-edge indicator (radio circle or checkbox square) into the
+/// given square frame. Frame width/height must equal `Layout.wizardRadioSize`
+/// so radio and checkbox occupy the same footprint.
+///
+/// - Parameters:
+///   - frame: target frame inside the row, in row-local coordinates.
+///   - selected: whether the indicator should render in the filled/checked state.
+///   - style: `.radio` for single-select, `.checkbox` for multi-select.
+/// - Returns: an `NSView` ready to be added to the row container.
+func drawWizardIndicator(frame: NSRect, selected: Bool, style: WizardIndicatorStyle) -> NSView {
+    let v = NSView(frame: frame)
+    v.wantsLayer = true
+    v.layer?.borderWidth = Layout.wizardRadioBorderWidth
+    switch style {
+    case .radio:
+        v.layer?.cornerRadius = Layout.wizardRadioSize / 2
+        if selected {
+            v.layer?.borderColor = Theme.buttonAllow.cgColor
+            v.layer?.backgroundColor = Theme.buttonAllow.cgColor
+            let ring = NSView(frame: NSRect(
+                x: Layout.wizardRadioInnerRing, y: Layout.wizardRadioInnerRing,
+                width: Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2,
+                height: Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2))
+            ring.wantsLayer = true
+            ring.layer?.backgroundColor = Theme.wizardRadioInnerGap.cgColor
+            ring.layer?.cornerRadius = ring.frame.width / 2
+            v.addSubview(ring)
+        } else {
+            v.layer?.borderColor = Theme.textSecondary.withAlphaComponent(0.55).cgColor
+            v.layer?.backgroundColor = NSColor.clear.cgColor
+        }
+    case .checkbox:
+        v.layer?.cornerRadius = Layout.wizardCheckboxCornerRadius
+        if selected {
+            v.layer?.borderColor = Theme.buttonAllow.cgColor
+            v.layer?.backgroundColor = Theme.buttonAllow.cgColor
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: Layout.wizardCheckmarkInsetX,
+                                  y: Layout.wizardCheckmarkPeakY))
+            path.addLine(to: CGPoint(x: Layout.wizardCheckmarkPeakX,
+                                     y: Layout.wizardCheckmarkLowY))
+            path.addLine(to: CGPoint(x: Layout.wizardCheckmarkHighX,
+                                     y: Layout.wizardCheckmarkHighY +
+                                        Layout.wizardCheckmarkPeakY))
+            let check = CAShapeLayer()
+            check.path = path
+            check.strokeColor = Theme.background.cgColor
+            check.fillColor = NSColor.clear.cgColor
+            check.lineWidth = Layout.wizardCheckmarkLineWidth
+            check.lineCap = .square
+            check.lineJoin = .miter
+            v.layer?.addSublayer(check)
+        } else {
+            v.layer?.borderColor = Theme.textSecondary.withAlphaComponent(0.55).cgColor
+            v.layer?.backgroundColor = NSColor.clear.cgColor
+        }
+    }
+    return v
+}
+
 /// Builds a single radio-card row view used in the question panel.
 ///
-/// The row is a horizontal layout: radio circle (14×14), then a vertical
-/// stack holding the bolded label on top and a secondary-colored description
-/// below. The whole row is center-aligned vertically so the radio sits midway
-/// between the two text lines.
+/// The row is a horizontal layout: a left-edge indicator (radio circle for
+/// single-select, checkbox for multi-select), then a vertical stack holding
+/// the bolded label on top and a secondary-colored description below. The
+/// description wraps onto multiple lines and the row grows to fit; when the
+/// description is empty the row stays at `Layout.wizardRowHeightMin`.
 ///
 /// - Parameters:
 ///   - label: Bold label text (e.g. `"SQLite"` or `"Other"`).
 ///   - description: Secondary description text under the label. Empty hides the line.
-///   - selected: If true, radio is filled and the row uses selected colors.
+///   - selected: If true, indicator is filled and the row uses selected colors.
 ///   - index: 1-based display index shown on the right; pass 0 to hide.
-/// - Returns: A configured `NSView` sized to the panel width × wizardRowHeightMin.
-func buildWizardOptionRow(label: String, description: String, selected: Bool, index: Int) -> NSView {
-    let container = NSView(frame: NSRect(x: 0, y: 0,
-        width: Layout.panelWidth - Layout.wizardBodyPaddingH * 2,
-        height: Layout.wizardRowHeightMin))
+///   - style: `.radio` for single-select; `.checkbox` for multi-select.
+/// - Returns: A configured `NSView` sized to the panel width × measured height.
+func buildWizardOptionRow(label: String, description: String, selected: Bool,
+                          index: Int, style: WizardIndicatorStyle) -> NSView {
+    let rowWidth = Layout.panelWidth - Layout.wizardBodyPaddingH * 2
+    let textX = Layout.wizardRowPaddingH + Layout.wizardRadioSize + Layout.wizardRadioGap
+    let textWidth = rowWidth - textX - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth
+
+    // Measure description height for wrapping. Empty description keeps the row
+    // at the minimum height (label + vertical padding).
+    var descHeight: CGFloat = 0
+    let descField = NSTextField(labelWithString: description)
+    if !description.isEmpty {
+        descField.font = Theme.wizardDescFont
+        descField.textColor = Theme.textSecondary
+        descField.usesSingleLineMode = false
+        descField.maximumNumberOfLines = 0
+        descField.lineBreakMode = .byWordWrapping
+        descField.preferredMaxLayoutWidth = textWidth
+        descHeight = ceil(descField.intrinsicContentSize.height)
+    }
+
+    // Row grows to fit label + gap + wrapped description + vertical padding.
+    // Existing label/desc baselines describe the minimum-height layout; we use
+    // the same gap above the description so short and tall rows visually align
+    // around the indicator.
+    let labelGapFromBottom = Layout.wizardRowDescY
+    let labelHeight = Layout.wizardRowLabelHeight
+    let interGap = (Layout.wizardRowLabelY - Layout.wizardRowDescY - Layout.wizardRowDescHeight)
+    let computedHeight = labelGapFromBottom + descHeight + (descHeight > 0 ? interGap : 0)
+        + labelHeight + (Layout.wizardRowHeightMin - Layout.wizardRowLabelY - labelHeight)
+    let rowHeight = max(Layout.wizardRowHeightMin, computedHeight)
+
+    let container = NSView(frame: NSRect(x: 0, y: 0, width: rowWidth, height: rowHeight))
     container.wantsLayer = true
     container.layer?.cornerRadius = Layout.wizardRowCornerRadius
-    container.layer?.backgroundColor = (selected ? Theme.wizardRowSelectedBg : Theme.wizardRowBg).cgColor
-    container.layer?.borderColor = (selected ? Theme.wizardRowSelectedBorder : Theme.wizardRowBorder).cgColor
+    container.layer?.backgroundColor =
+        (selected ? Theme.wizardRowSelectedBg : Theme.wizardRowBg).cgColor
+    container.layer?.borderColor =
+        (selected ? Theme.wizardRowSelectedBorder : Theme.wizardRowBorder).cgColor
     container.layer?.borderWidth = 1
 
-    // Radio
-    let radio = NSView(frame: NSRect(
+    let indFrame = NSRect(
         x: Layout.wizardRowPaddingH,
-        y: (Layout.wizardRowHeightMin - Layout.wizardRadioSize) / 2,
-        width: Layout.wizardRadioSize,
-        height: Layout.wizardRadioSize))
-    radio.wantsLayer = true
-    radio.layer?.cornerRadius = Layout.wizardRadioSize / 2
-    radio.layer?.borderWidth = Layout.wizardRadioBorderWidth
-    if selected {
-        radio.layer?.borderColor = Theme.buttonAllow.cgColor
-        radio.layer?.backgroundColor = Theme.buttonAllow.cgColor
-        // Inner ring hole
-        let ring = NSView(frame: NSRect(
-            x: Layout.wizardRadioInnerRing,
-            y: Layout.wizardRadioInnerRing,
-            width: Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2,
-            height: Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2))
-        ring.wantsLayer = true
-        ring.layer?.backgroundColor = Theme.wizardRadioInnerGap.cgColor
-        ring.layer?.cornerRadius = (Layout.wizardRadioSize - Layout.wizardRadioInnerRing * 2) / 2
-        radio.addSubview(ring)
-    } else {
-        radio.layer?.borderColor = Theme.textSecondary.withAlphaComponent(0.55).cgColor
-        radio.layer?.backgroundColor = NSColor.clear.cgColor
-    }
-    container.addSubview(radio)
-
-    // Text stack (label + description)
-    let textX = Layout.wizardRowPaddingH + Layout.wizardRadioSize + Layout.wizardRadioGap
-    let textWidth = container.frame.width - textX - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth
+        y: (rowHeight - Layout.wizardRadioSize) / 2,
+        width: Layout.wizardRadioSize, height: Layout.wizardRadioSize)
+    container.addSubview(drawWizardIndicator(frame: indFrame, selected: selected, style: style))
 
     let labelField = NSTextField(labelWithString: label)
     labelField.font = Theme.wizardLabelFont
     labelField.textColor = Theme.textPrimary
     labelField.lineBreakMode = .byTruncatingTail
-    labelField.frame = NSRect(x: textX, y: Layout.wizardRowLabelY,
-                              width: textWidth, height: Layout.wizardRowLabelHeight)
+    let labelY = rowHeight - (Layout.wizardRowHeightMin - Layout.wizardRowLabelY) - labelHeight
+    labelField.frame = NSRect(x: textX, y: labelY, width: textWidth, height: labelHeight)
     container.addSubview(labelField)
 
     if !description.isEmpty {
-        let descField = NSTextField(labelWithString: description)
-        descField.font = Theme.wizardDescFont
-        descField.textColor = Theme.textSecondary
-        descField.lineBreakMode = .byTruncatingTail
-        descField.frame = NSRect(x: textX, y: Layout.wizardRowDescY,
-                                 width: textWidth, height: Layout.wizardRowDescHeight)
+        descField.frame = NSRect(x: textX, y: labelGapFromBottom,
+                                 width: textWidth, height: descHeight)
         container.addSubview(descField)
     }
 
-    // Index number on the right
     if index > 0 {
         let idxField = NSTextField(labelWithString: "\(index)")
         idxField.font = Theme.wizardIndexFont
-        idxField.textColor = selected ? Theme.buttonAllow : Theme.textSecondary.withAlphaComponent(0.55)
+        idxField.textColor = selected
+            ? Theme.buttonAllow
+            : Theme.textSecondary.withAlphaComponent(0.55)
         idxField.alignment = .right
         idxField.frame = NSRect(
-            x: container.frame.width - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth,
-            y: (Layout.wizardRowHeightMin - Layout.wizardRowIndexHeight) / 2,
+            x: rowWidth - Layout.wizardRowPaddingH - Layout.wizardRowIndexWidth,
+            y: (rowHeight - Layout.wizardRowIndexHeight) / 2,
             width: Layout.wizardRowIndexWidth, height: Layout.wizardRowIndexHeight)
         container.addSubview(idxField)
     }
@@ -3464,7 +3546,7 @@ func buildWizardQuestionPanel(
     var optionRowViews: [NSView] = []
     for (i, opt) in question.options.enumerated() {
         let row = buildWizardOptionRow(label: opt.label, description: opt.description,
-                                       selected: false, index: i + 1)
+                                       selected: false, index: i + 1, style: .radio)
         optionRowViews.append(row)
         body.addSubview(row)
     }

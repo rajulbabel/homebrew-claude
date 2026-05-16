@@ -1504,6 +1504,42 @@ func testWizardState() {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// MARK: - buildWizardOptionRow Tests (4)
+// ═══════════════════════════════════════════════════════════════════
+
+func testBuildWizardOptionRow() {
+    test("buildWizardOptionRow: short description fits at row min height") {
+        let v = buildWizardOptionRow(
+            label: "Yes", description: "Short.",
+            selected: false, index: 1, style: .radio)
+        assertEq(v.frame.height, Layout.wizardRowHeightMin)
+    }
+    test("buildWizardOptionRow: long description grows row beyond minimum") {
+        let long = String(repeating: "Very long description text. ", count: 12)
+        let v = buildWizardOptionRow(
+            label: "Yes", description: long,
+            selected: false, index: 1, style: .radio)
+        assertTrue(v.frame.height > Layout.wizardRowHeightMin,
+            "row should grow; got \(v.frame.height)")
+    }
+    test("buildWizardOptionRow: empty description stays at row min height") {
+        let v = buildWizardOptionRow(
+            label: "Other", description: "",
+            selected: false, index: 1, style: .radio)
+        assertEq(v.frame.height, Layout.wizardRowHeightMin)
+    }
+    test("buildWizardOptionRow: checkbox style produces same size as radio for same text") {
+        let r = buildWizardOptionRow(
+            label: "Y", description: "x",
+            selected: false, index: 1, style: .radio)
+        let c = buildWizardOptionRow(
+            label: "Y", description: "x",
+            selected: false, index: 1, style: .checkbox)
+        assertEq(r.frame.height, c.frame.height)
+    }
+}
+
 func testFormatWizardAnswers() {
     let q1 = WizardQuestion(
         header: "DB", question: "Which database?",
@@ -1604,6 +1640,7 @@ enum ApproveTests {
         testWizardTypes()
         testParseWizardQuestions()
         testWizardState()
+        testBuildWizardOptionRow()
         testFormatWizardAnswers()
         testBuildGist()
         testLastComponent()
