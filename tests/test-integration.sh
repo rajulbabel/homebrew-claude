@@ -216,17 +216,26 @@ OUTPUT14=$(echo '{"tool_name":"Write","tool_input":{"file_path":"/project/.claud
     | "$APPROVE" 2>/dev/null)
 assert_contains "settings Write allow" "$OUTPUT14" '"permissionDecision":"allow"'
 
-# ── 20. AskUserQuestion mixed-wizard fixture is readable ───────
-# Full end-to-end execution of the wizard requires a GUI; assert the
-# fixture is well-formed JSON the parser can consume. The richer smoke
-# is deferred until an autotest hook env is added.
-echo "  Running: AskUserQuestion mixed-wizard fixture sanity..."
+# ── 20. AskUserQuestion mixed-wizard binary smoke ───────────────
+echo "  Running: AskUserQuestion mixed-wizard binary smoke..."
 FIXTURE="$SCRIPT_DIR/fixtures/askuserquestion-mixed.json"
-if [ -r "$FIXTURE" ] && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$FIXTURE" 2>/dev/null; then
-    PASSED=$((PASSED + 1))
-else
+if [ ! -r "$FIXTURE" ]; then
     FAILED=$((FAILED + 1))
-    echo "  FAIL: askuserquestion-mixed.json is not valid JSON"
+    echo "  FAIL: askuserquestion-mixed.json not readable"
+else
+    # Pipe the fixture into claude-approve. The wizard would normally
+    # open a GUI panel and block; wrap in a 3-second timeout so the
+    # binary gets killed once it has had a chance to parse stdin. Any
+    # exit code is acceptable as long as it isn't a signal (segfault=139,
+    # abort=134, etc.) — same shape as test 3 (malformed JSON).
+    cat "$FIXTURE" | run_with_timeout 3 "$APPROVE" > /dev/null 2>&1
+    EXIT=$?
+    if [ "$EXIT" -ne 139 ] && [ "$EXIT" -ne 134 ]; then
+        PASSED=$((PASSED + 1))
+    else
+        FAILED=$((FAILED + 1))
+        echo "  FAIL: claude-approve crashed on mixed-wizard fixture (signal exit $EXIT)"
+    fi
 fi
 
 # ── Summary ─────────────────────────────────────────────────────
