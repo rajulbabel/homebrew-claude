@@ -3310,7 +3310,14 @@ func buildWizardOptionRow(label: String, description: String, selected: Bool,
     labelField.font = Theme.wizardLabelFont
     labelField.textColor = Theme.textPrimary
     labelField.lineBreakMode = .byTruncatingTail
-    let labelY = rowHeight - (Layout.wizardRowHeightMin - Layout.wizardRowLabelY)
+    // With a description the label sits in its baseline slot above the
+    // description line. With no description there is no line below it, so the
+    // label is vertically centred in the row instead of clinging to the
+    // description baseline (which left it sitting above centre with an empty
+    // gap underneath).
+    let labelY = description.isEmpty
+        ? (rowHeight - labelHeight) / 2
+        : rowHeight - (Layout.wizardRowHeightMin - Layout.wizardRowLabelY)
     labelField.frame = NSRect(x: textX, y: labelY, width: textWidth, height: labelHeight)
     container.addSubview(labelField)
 
