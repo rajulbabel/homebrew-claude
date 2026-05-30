@@ -2211,15 +2211,17 @@ func animateButtonPress(_ button: NSView, restFillColor: NSColor? = nil) {
     layer.add(press, forKey: "wizardPressIn")
     CATransaction.commit()
 
-    // Release: scale back to 1.0 over 120 ms, ease-out.
+    // Release: scale back to 1.0 over 60 ms, ease-out. Press (60 ms) + release
+    // (60 ms) = 120 ms total, matching `Layout.pressAnimationDelay` so the full
+    // press completes before a dialog dismiss / wizard page advance fires.
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
         CATransaction.begin()
-        CATransaction.setAnimationDuration(0.12)
+        CATransaction.setAnimationDuration(0.06)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
         let release = CABasicAnimation(keyPath: "transform.scale")
         release.fromValue = 0.96
         release.toValue   = 1.0
-        release.duration  = 0.12
+        release.duration  = 0.06
         release.fillMode  = .forwards
         release.isRemovedOnCompletion = false
         layer.add(release, forKey: "wizardPressOut")
@@ -3653,7 +3655,16 @@ final class WizardOtherRow: NSView, NSTextViewDelegate {
 
     // MARK: NSTextViewDelegate
 
+    /// Guards against re-entrant `textDidChange`. `refreshHeight()` resizes the
+    /// row/panel mid-insert, which macOS's text-input system (TSM) can observe
+    /// and use to re-run its insert loop, re-firing this delegate callback. Left
+    /// unguarded, one keystroke fans out into hundreds of synchronous repaints.
+    private var inTextDidChange = false
+
     func textDidChange(_ notification: Notification) {
+        if inTextDidChange { return }
+        inTextDidChange = true
+        defer { inTextDidChange = false }
         onTextChange(textView.string)
         refreshHeight()
         textView.scrollRangeToVisible(textView.selectedRange())
